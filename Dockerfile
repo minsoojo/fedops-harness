@@ -6,7 +6,7 @@ RUN --mount=type=secret,id=build_ca if [ -f /run/secrets/build_ca ]; then export
 FROM python:3.12-slim-bookworm
 RUN mkdir -p /sandbox && chmod 1777 /sandbox
 COPY --chmod=644 evidence/aggregation.py evidence/LICENSE /opt/fedops/evidence/
-COPY --chmod=644 check.py worker.py /opt/fedops/
+COPY --chmod=644 check.py worker.py stream_loop.py /opt/fedops/
 RUN chmod 755 /opt/fedops /opt/fedops/evidence
 WORKDIR /sandbox
 COPY --from=cli --chmod=755 /tmp/claude /usr/local/bin/claude

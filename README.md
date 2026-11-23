@@ -35,14 +35,14 @@ python3 offline.py
 
 대상은 **Docker 드라이버를 사용하는 로컬 NVIDIA OpenShell 0.1.9 게이트웨이**다. Linux에서는 Landlock ABI v3 이상을 실제로 사용할 수 있어야 한다. 호스트에 Python, Docker, OpenShell을 준비하고, `openshell whoami`로 활성 게이트웨이를 확인한다. 배포판의 기본 샌드박스 이미지에 의존하지 않고 Claude Code 2.1.330을 고정한 이미지를 빌드한다. [NVIDIA 설치 가이드](https://docs.nvidia.com/openshell/v0.1.9/about/installation) · [OpenShell 샌드박스](https://docs.nvidia.com/openshell/v0.1.9/how-it-works/sandboxes/overview)
 
-호스트 환경에 `OPENROUTER_API_KEY`를 비밀 변수로 설정한 뒤 아래 순서로 실행한다. 기본 모델은 `anthropic/claude-sonnet-4.6`이고 `FEDOPS_MODEL`로 변경할 수 있다. 모델 호출 요금은 OpenRouter 계정에 청구된다. [OpenRouter의 Claude Code 연동 문서](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration)
+프로젝트 루트의 `.env`에 `OPENROUTER_API_KEY=발급받은키` 한 줄을 저장한 뒤 (호스트 환경변수를 설정했다면 그 값이 우선한다) 아래 순서로 실행한다. 기본 모델은 `anthropic/claude-sonnet-4.6`이고 `FEDOPS_MODEL`로 변경할 수 있다. 모델 호출 요금은 OpenRouter 계정에 청구된다. [OpenRouter의 Claude Code 연동 문서](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration)
 
 ```sh
 python3 agent.py setup
 python3 agent.py live-demo
 ```
 
-`setup`은 전용 프로필·provider를 등록하고 이미지를 빌드한 뒤 `fedops-agent` 샌드박스를 만든다. 이미 있는 동명의 provider와 샌드박스는 재사용한다. 기존 샌드박스에 새 이미지를 반영하려면 다른 이름을 `FEDOPS_SANDBOX`에 지정해 setup을 실행한다. 빌드 환경이 별도 CA를 요구하면 호스트의 신뢰할 수 있는 CA 번들 경로를 `FEDOPS_BUILD_CA`에 설정한다.
+`setup`은 전용 프로필·provider를 등록하고 이미지를 빌드한 뒤 `fedops-agent-loop` 샌드박스를 만든다. 이미 있는 동명의 provider와 샌드박스는 재사용한다. 기존 샌드박스에 새 이미지를 반영하려면 다른 이름을 `FEDOPS_SANDBOX`에 지정해 setup을 실행한다. 빌드 환경이 별도 CA를 요구하면 호스트의 신뢰할 수 있는 CA 번들 경로를 `FEDOPS_BUILD_CA`에 설정한다.
 
 `live-demo`는 독립된 메모리 파일로 두 번 실제 호출한다. 첫 응답은 현재 구현 0.20과 합의 없음이어야 한다. 하네스가 발표용 결정을 호스트에 기록한 뒤 두 번째 세션이 0.80, 명시한 0은 0.20, 이번 실행의 고유 출처까지 반환해야 PASS가 나온다. 세션 ID도 서로 달라야 한다.
 
@@ -66,3 +66,11 @@ docker run --rm -i --network none --user 1000:1000 -e HOME=/tmp fedops-claude:2.
 ## 검증 범위 · 2026-11-23
 
 OpenShell 0.1.9 게이트웨이를 mTLS로 기동해 로그인, provider 프로필 lint·import, 샌드박스 생성 요청까지 확인했다. 이 클라우드 커널은 Landlock을 제공하지 않아 supervisor가 준비 단계에서 종료됐다. Claude 이미지, 로컬 모의 응답을 사용한 도구 실행, 컨텍스트 및 독립 검증기는 별도로 시험했다. 실제 OpenRouter 호출과 OpenShell 내부의 종단 간 실행은 미검증이다.
+
+## 실행 중 도구 호출 보기
+
+서버에서 `python3 viewer.py`를 실행하고 브라우저로 http://127.0.0.1:8765 를 연다. 원격 서버라면 SSH 연결에 `-L 8765:127.0.0.1:8765`를 추가한다. 다른 터미널에서 아래 명령을 실행하면 시작, 도구 호출·반환, 완료·실패가 순서대로 표시된다.
+
+- 키 없는 연습: `docker build -t fedops-claude:2.1.330 .` 후 `python3 agent.py replay-loop`. 격리된 Docker 안에서 모의 모델 응답에 따라 실제 Claude Code가 Read와 Edit를 실행한다.
+- 실제 작업: `python3 agent.py setup` 후 기존 ask, edit, live-demo 명령을 사용한다. 이 버전의 기본 샌드박스는 새 worker를 포함하는 `fedops-agent-loop`다.
+- 창은 0.75초마다 로컬 실행 기록을 읽는다. 실행을 선택하면 해당 작업의 기록을 다시 볼 수 있다.

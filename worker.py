@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from stream_loop import messages
 
 APP = Path(__file__).resolve().parent
 TARGET = "src/python/fedops/simulation/fl_strategy/aggregation.py"
@@ -27,7 +28,7 @@ def tests(target):
     return {"code": result.returncode, "log": result.stdout + result.stderr}
 
 
-def execute(request, work):
+def execute(request, work, emit=None):
     mode = request["mode"]
     if mode not in {"ask", "recall", "edit"}:
         raise ValueError("unknown task")
@@ -64,23 +65,23 @@ def execute(request, work):
     if mode == "recall":
         args += ["--json-schema", json.dumps(SCHEMA)]
         prompt += "\ncurrent는 현재 구현, agreed는 합의 결과, reported_zero는 B가 0을 보고할 때 합의 결과입니다. 저장된 결정이 없으면 합의 관련 필드와 source는 null로 답하세요."
-    result = subprocess.run(args, input=prompt, text=True, capture_output=True,
-                            cwd=work, env=env, timeout=300)
-    if result.returncode:
-        raise RuntimeError("Claude 종료 코드 " + str(result.returncode) + " · " +
-                           (result.stderr or result.stdout)[-1500:].replace(token, "[redacted]"))
-    events = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    if not events or events[-1].get("type") != "result":
-        raise RuntimeError("Claude 최종 결과 이벤트가 없습니다.")
-    answer = events[-1]
+    answer = None
     trace = []
-    for event in events:
+    for event in messages(args, prompt, 300, cwd=work, env=env, stderr=subprocess.DEVNULL):
+        if event.get("type") == "result":
+            answer = event
+        previous = len(trace)
         for block in event.get("message", {}).get("content", []):
             if isinstance(block, dict) and block.get("type") == "tool_use":
                 trace.append({"event": "tool_use", "id": block.get("id"), "tool": block.get("name")})
             elif isinstance(block, dict) and block.get("type") == "tool_result":
                 trace.append({"event": "tool_result", "id": block.get("tool_use_id"),
                               "error": bool(block.get("is_error"))})
+        if emit:
+            for item in trace[previous:]:
+                emit(item)
+    if answer is None:
+        raise RuntimeError("Claude 최종 결과 이벤트가 없습니다.")
     report["trace"] = trace
     if answer.get("is_error"):
         raise RuntimeError(str(answer.get("result", "Claude error")).replace(token, "[redacted]"))
@@ -107,4 +108,7 @@ def execute(request, work):
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir="/sandbox", prefix="fedops-") as folder:
-        print(json.dumps(execute(json.load(sys.stdin), Path(folder)), ensure_ascii=False))
+        request = json.load(sys.stdin)
+        def emit(item):
+            print(json.dumps({"progress": item}), flush=True)
+        print(json.dumps(execute(request, Path(folder), emit if request.get("stream") else None), ensure_ascii=False))

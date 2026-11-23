@@ -14,7 +14,7 @@ if Path("/opt/fedops/worker.py").exists():
 import worker
 
 
-def replay(work):
+def replay(work, emit=None):
     class Messages(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
@@ -63,7 +63,7 @@ def replay(work):
 
     with ThreadingHTTPServer(("127.0.0.1", 0), Messages) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        real_run = subprocess.run
+        real_run = subprocess.Popen
 
         def local_transport(argv, **kwargs):
             if argv[0] == "claude":
@@ -73,17 +73,20 @@ def replay(work):
 
         try:
             with patch.dict(os.environ, {"OPENROUTER_API_KEY": "offline-test-value"}), \
-                    patch.object(worker.subprocess, "run", local_transport):
+                    patch.object(subprocess, "Popen", local_transport):
                 report = worker.execute({"mode": "edit", "model": "anthropic/claude-sonnet-4.6",
-                                         "brief": "Run the FedOps tool replay."}, work)
+                                         "brief": "Run the FedOps tool replay."}, work, emit)
         finally:
             server.shutdown()
     if (report["before"]["code"] != 1 or report["after"]["code"] != 0 or
             [e["tool"] for e in report["trace"] if e["event"] == "tool_use"] != ["Read", "Edit"]):
         raise SystemExit("Replay failed")
-    print("PASS · Claude Read → Edit · 기존 2개 실패 → 7개 통과 · 로컬 모의 응답")
+    if emit is None:
+        print("PASS · Claude Read → Edit · 기존 2개 실패 → 7개 통과 · 로컬 모의 응답")
 
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as folder:
-        replay(Path(folder))
+        def emit(item):
+            print(json.dumps(item), flush=True)
+        replay(Path(folder), emit if "--timeline" in sys.argv else None)

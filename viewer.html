@@ -1,0 +1,26 @@
+<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FedOps 실행 타임라인</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#f4f7fa;color:#183248;font:16px/1.6 system-ui,sans-serif}main{max-width:800px;margin:7vh auto;padding:28px}h1{letter-spacing:-.04em}select{padding:8px;max-width:100%}ol{background:white;padding:12px 26px;border-radius:14px;list-style:none}li{padding:12px 0;border-bottom:1px solid #dde6ea}li:last-child{border:0}time{color:#516979;margin-right:20px;font:14px monospace}strong{color:#066257}</style>
+<main><h1>FedOps 실행 타임라인</h1><label>실행 선택 <select id="pick"><option value="">최근 실행 따라가기</option></select></label><p id="status" role="status"></p><ol id="events"></ol></main>
+<script>
+const pick=document.querySelector('#pick'), statusText=document.querySelector('#status'), list=document.querySelector('#events');
+let runs={};
+function render(){
+ const rows=runs[pick.value || Object.keys(runs)[0]] || [], tools=new Map();
+ const labels={start:'작업 시작',done:'완료',failed:'실패'};
+ statusText.textContent=rows.length ? (labels[rows.at(-1).event] || '실행 중')+' · '+ (pick.value || Object.keys(runs)[0]) : '실행 대기 중 · agent.py ask 또는 edit를 실행하세요.';
+ list.replaceChildren(...rows.map(row=>{
+ const li=document.createElement('li'), t=document.createElement('time');
+ t.textContent=new Date(row.time).toLocaleTimeString('ko-KR');
+ if(row.event==='tool_use') tools.set(row.id,row.tool);
+ const name=tools.get(row.id)||'도구';
+ li.append(t,row.event==='tool_use'?name+' 호출':row.event==='tool_result'?name+(row.error?' 오류 반환':' 결과 반환'):labels[row.event]||row.event);
+ return li;
+ }));
+}
+pick.onchange=render;
+async function refresh(){try{
+ const resp=await fetch('/runs');if(!resp.ok)throw Error();runs=await resp.json();
+ const chosen=pick.value;pick.replaceChildren(new Option('최근 실행 따라가기',''),...Object.keys(runs).map(k=>new Option(k,k)));pick.value=chosen;render();
+}catch{statusText.textContent='연결 끊김 · 다시 연결하는 중';}finally{setTimeout(refresh,750)}}
+refresh();
+</script></html>

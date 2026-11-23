@@ -8,11 +8,13 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
+from stream_loop import messages
 
 import fedops
 
 ROOT = Path(__file__).resolve().parent
-BOX = os.getenv("FEDOPS_SANDBOX", "fedops-agent")
+BOX = os.getenv("FEDOPS_SANDBOX", "fedops-agent-loop")
 MODEL = os.getenv("FEDOPS_MODEL", "anthropic/claude-sonnet-4.6")
 PROVIDER = "fedops-openrouter"
 IMAGE = "fedops-claude:2.1.330"
@@ -28,11 +30,19 @@ def setup():
         raise ValueError("이 패키지의 OpenShell 버전은 0.1.9입니다.")
     subprocess.run(["openshell", "whoami"], check=True)
     if not exists("provider", PROVIDER):
-        if not os.getenv("OPENROUTER_API_KEY"):
-            raise ValueError("호스트의 비밀 변수 OPENROUTER_API_KEY가 필요합니다.")
+        provider_env = os.environ.copy()
+        if not provider_env.get("OPENROUTER_API_KEY"):
+            env_file = ROOT / ".env"
+            if env_file.is_file():
+                for line in env_file.read_text(encoding="utf-8").splitlines():
+                    name, sep, value = line.partition("=")
+                    if sep and name.strip() == "OPENROUTER_API_KEY":
+                        provider_env[name.strip()] = value.strip().strip("\"'")
+        if not provider_env.get("OPENROUTER_API_KEY"):
+            raise ValueError(".env 또는 환경변수에 OPENROUTER_API_KEY를 설정하세요.")
         subprocess.run(["openshell", "profile", "import", "-f", str(ROOT / "infra/provider.yaml")], check=True)
         subprocess.run(["openshell", "provider", "create", "--name", PROVIDER,
-                        "--type", PROVIDER, "--from-existing"], check=True)
+                        "--type", PROVIDER, "--from-existing"], check=True, env=provider_env)
     if not exists("sandbox", BOX):
         build = ["docker", "build", "-t", IMAGE]
         if os.getenv("FEDOPS_BUILD_CA"):
@@ -51,19 +61,43 @@ def run_folder(prefix):
 
 
 def run_turn(folder, mode, question, memory=fedops.MEMORY):
+    return trace_run(folder, mode, lambda record: _run_turn(folder, mode, question, memory, record))
+
+
+def trace_run(folder, mode, job):
+    with (folder / "timeline.jsonl").open("w", buffering=1) as timeline:
+        def record(event, **fields):
+            item = dict(event=event, time=datetime.now(timezone.utc).isoformat(), **fields)
+            timeline.write(json.dumps(item) + "\n")
+
+        record("start", mode=mode)
+        try:
+            report = job(record)
+        except BaseException:
+            record("failed")
+            raise
+        record("done")
+        return report
+
+
+def _run_turn(folder, mode, question, memory, record):
     buf = StringIO()
     with redirect_stdout(buf):
         fedops.brief(question, memory)
     brief = buf.getvalue()
     (folder / "brief.md").write_text(brief)
-    req = {"mode": mode, "brief": brief, "model": MODEL}
+    req = {"mode": mode, "stream": True, "brief": brief, "model": MODEL}
     cmd = ["openshell", "sandbox", "exec", "-n", BOX, "--", "python3", "/opt/fedops/worker.py"]
     print(f"기록  {folder}", flush=True)
-    result = subprocess.run(cmd, input=json.dumps(req), capture_output=True, text=True, timeout=370)
-    (folder / "runtime.log").write_text(result.stderr)
-    if result.returncode:
-        raise ValueError(f"OpenShell 실행 실패 · {folder / 'runtime.log'}")
-    report = json.loads(result.stdout)
+    report = None
+    with (folder / "runtime.log").open("w") as log:
+        for packet in messages(cmd, json.dumps(req), 370, stderr=log):
+            if "progress" in packet:
+                record(**packet["progress"])
+            else:
+                report = packet
+    if report is None:
+        raise ValueError(f"결과 없음 · {folder / 'runtime.log'}")
     (folder / "result.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
     (folder / "events.jsonl").write_text("".join(
         json.dumps(event, ensure_ascii=False) + "\n" for event in report["trace"]))
@@ -74,6 +108,17 @@ def run_turn(folder, mode, question, memory=fedops.MEMORY):
         if not report["patch"] or report["after"]["code"] != 0:
             raise ValueError("코드 수정 완료 기준 미달 · after.log 확인")
     return report
+
+
+def replay_loop():
+    folder = run_folder("replay")
+    def job(record):
+        cmd = ["docker", "run", "--rm", "-i", "--network", "none", "--user", "1000:1000",
+               "-e", "HOME=/tmp", IMAGE, "python3", "-", "--timeline"]
+        for item in messages(cmd, (ROOT / "replay.py").read_text(), 370):
+            record(**item)
+    trace_run(folder, "replay", job)
+    print(f"PASS · Claude Read → Edit · {folder}")
 
 
 def live_demo():
@@ -104,11 +149,14 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     sub.add_parser("setup")
     sub.add_parser("live-demo")
+    sub.add_parser("replay-loop")
     for mode in ("ask", "edit"):
         sub.add_parser(mode).add_argument("question")
     args = parser.parse_args()
     if args.mode == "setup":
         setup()
+    elif args.mode == "replay-loop":
+        replay_loop()
     elif args.mode == "live-demo":
         live_demo()
     else:
