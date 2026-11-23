@@ -8,6 +8,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+from queue import Queue
 from stream_loop import messages
 
 APP = Path(__file__).resolve().parent
@@ -26,6 +28,53 @@ def tests(target):
     result = subprocess.run([sys.executable, "-I", "-B", str(APP / "check.py"), str(target)],
                             capture_output=True, text=True, timeout=30)
     return {"code": result.returncode, "log": result.stdout + result.stderr}
+
+
+class RoundRecorder:
+    """Publish completed top-level messages and correlate tool returns by call ID."""
+
+    def __init__(self, emit):
+        self.emit = emit
+        self.lock = threading.Lock()
+        self.requests = Queue()
+        self.sent = 0
+        self.current = None
+        self.blocks = []
+        self.calls = {}
+
+    def publish(self, event, **fields):
+        with self.lock:
+            self.emit(dict(event=event, **fields))
+
+    def observe_request(self, line):
+        if line.rstrip().partition(" ")[2] == "[DEBUG] [API REQUEST] /v1/messages source=sdk":
+            self.sent += 1
+            self.publish("model_request", round=self.sent)
+            self.requests.put(self.sent)
+
+    def observe(self, packet):
+        if packet.get("parent_tool_use_id"):
+            return
+        kind = packet.get("type")
+        stream = packet.get("event", {})
+        if kind == "stream_event" and stream.get("type") == "message_start":
+            # stdout and stderr are drained independently. Consume starts in send order.
+            self.current = self.requests.get(timeout=5)
+            self.blocks = []
+        elif kind == "assistant" and self.current is not None:
+            for block in packet.get("message", {}).get("content", []):
+                if block["type"] == "text":
+                    self.blocks.append({"type": "text", "text": block["text"]})
+                elif block["type"] == "tool_use":
+                    self.blocks.append({key: block[key] for key in ("type", "id", "name", "input")})
+                    self.calls[block["id"]] = self.current
+        elif kind == "stream_event" and stream.get("type") == "message_stop" and self.current is not None:
+            self.publish("model_response", round=self.current, blocks=self.blocks)
+            self.current = None
+
+    def tool_event(self, item):
+        number = self.calls.get(item["id"])
+        self.publish(**item, **({"round": number} if number is not None else {}))
 
 
 def execute(request, work, emit=None):
@@ -67,7 +116,13 @@ def execute(request, work, emit=None):
         prompt += "\ncurrent는 현재 구현, agreed는 합의 결과, reported_zero는 B가 0을 보고할 때 합의 결과입니다. 저장된 결정이 없으면 합의 관련 필드와 source는 null로 답하세요."
     answer = None
     trace = []
-    for event in messages(args, prompt, 300, cwd=work, env=env, stderr=subprocess.DEVNULL):
+    recorder = RoundRecorder(emit) if emit else None
+    if recorder:
+        args.extend(["--debug-to-stderr", "--include-partial-messages"])
+    for event in messages(args, prompt, 300, cwd=work, env=env, stderr=subprocess.DEVNULL,
+                          on_stderr=recorder.observe_request if recorder else None):
+        if recorder:
+            recorder.observe(event)
         if event.get("type") == "result":
             answer = event
         previous = len(trace)
@@ -79,7 +134,7 @@ def execute(request, work, emit=None):
                               "error": bool(block.get("is_error"))})
         if emit:
             for item in trace[previous:]:
-                emit(item)
+                recorder.tool_event(item)
     if answer is None:
         raise RuntimeError("Claude 최종 결과 이벤트가 없습니다.")
     report["trace"] = trace

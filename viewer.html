@@ -1,26 +1,125 @@
-<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FedOps 실행 타임라인</title>
-<style>*{box-sizing:border-box}body{margin:0;background:#f4f7fa;color:#183248;font:16px/1.6 system-ui,sans-serif}main{max-width:800px;margin:7vh auto;padding:28px}h1{letter-spacing:-.04em}select{padding:8px;max-width:100%}ol{background:white;padding:12px 26px;border-radius:14px;list-style:none}li{padding:12px 0;border-bottom:1px solid #dde6ea}li:last-child{border:0}time{color:#516979;margin-right:20px;font:14px monospace}strong{color:#066257}</style>
-<main><h1>FedOps 실행 타임라인</h1><label>실행 선택 <select id="pick"><option value="">최근 실행 따라가기</option></select></label><p id="status" role="status"></p><ol id="events"></ol></main>
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FedOps 실행 타임라인</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f4f7fa;color:#183248;font:16px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:5vh auto;padding:24px}h1{letter-spacing:-.04em}select{padding:8px;max-width:100%}ol{padding:0;list-style:none}li{background:white;border:1px solid #dbe3e9;border-radius:10px;margin:12px 0;padding:16px}h2{font-size:1rem;margin:0 0 8px}.flow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.branches{display:grid;gap:6px}.branch{border-left:2px solid #69a399;padding-left:10px}summary{cursor:pointer;color:#066257}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.9rem}details{min-width:0;max-width:100%}#status{font-weight:600}time{margin-right:1em;color:#536677}
+</style>
+<main>
+<h1>FedOps 실행 타임라인</h1>
+<label>실행 선택 <select id="pick"><option value="">최근 실행 따라가기</option></select></label>
+<p id="status" role="status"></p><ol id="events"></ol>
+</main>
 <script>
-const pick=document.querySelector('#pick'), statusText=document.querySelector('#status'), list=document.querySelector('#events');
-let runs={};
-function render(){
- const rows=runs[pick.value || Object.keys(runs)[0]] || [], tools=new Map();
- const labels={start:'작업 시작',done:'완료',failed:'실패'};
- statusText.textContent=rows.length ? (labels[rows.at(-1).event] || '실행 중')+' · '+ (pick.value || Object.keys(runs)[0]) : '실행 대기 중 · agent.py ask 또는 edit를 실행하세요.';
- list.replaceChildren(...rows.map(row=>{
- const li=document.createElement('li'), t=document.createElement('time');
- t.textContent=new Date(row.time).toLocaleTimeString('ko-KR');
- if(row.event==='tool_use') tools.set(row.id,row.tool);
- const name=tools.get(row.id)||'도구';
- li.append(t,row.event==='tool_use'?name+' 호출':row.event==='tool_result'?name+(row.error?' 오류 반환':' 결과 반환'):labels[row.event]||row.event);
- return li;
- }));
+const pick = document.querySelector('#pick');
+const statusText = document.querySelector('#status');
+const list = document.querySelector('#events');
+const expanded = new Map();
+const labels = {start:'작업 시작', done:'완료', failed:'실패'};
+let runs = {}, lastRender;
+function element(tag, text) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;
+  return node;
 }
-pick.onchange=render;
-async function refresh(){try{
- const resp=await fetch('/runs');if(!resp.ok)throw Error();runs=await resp.json();
- const chosen=pick.value;pick.replaceChildren(new Option('최근 실행 따라가기',''),...Object.keys(runs).map(k=>new Option(k,k)));pick.value=chosen;render();
-}catch{statusText.textContent='연결 끊김 · 다시 연결하는 중';}finally{setTimeout(refresh,750)}}
+function legacy(rows) {
+  const tools = new Map();
+  for (const row of rows) {
+    if (row.event === 'tool_use') tools.set(row.id, row.tool);
+    let label = labels[row.event] || row.event;
+    if (row.event === 'tool_use') label = row.tool + ' 호출';
+    if (row.event === 'tool_result') label = (tools.get(row.id) || '도구') + (row.error ? ' 오류 반환' : ' 결과 반환');
+    if (row.event === 'model_request') label = row.round + '회차 · 모델 응답 대기 중';
+    const li = element('li');
+    li.append(element('time', new Date(row.time).toLocaleTimeString('ko-KR')), label);
+    list.append(li);
+  }
+}
+function drawRound(run, number, round, terminal) {
+  const li = element('li'), flow = element('div'), branches = element('div');
+  flow.className = 'flow';
+  branches.className = 'branches';
+  li.append(element('h2', number + '회차'), flow);
+  flow.append(element('span', '모델 요청 →'));
+  let state = '모델 응답 대기 중';
+  if (round.blocks) {
+    const calls = round.blocks.filter(block => block.type === 'tool_use');
+    const final = terminal === 'done' && !calls.length;
+    const details = element('details');
+    const key = JSON.stringify([run, number]);
+    details.open = expanded.get(key) ?? final;
+    details.append(element('summary', final ? '최종 답변' : '모델 출력'));
+    details.ontoggle = () => { if (details.isConnected) expanded.set(key, details.open); };
+    for (const block of round.blocks) {
+      details.append(element('pre', block.type === 'text' ? block.text :
+        block.name + '\n' + JSON.stringify(block.input, null, 2)));
+    }
+    flow.append(details, branches);
+    let active = [];
+    for (const call of calls) {
+      const result = round.results.get(call.id);
+      if (!result) active.push(call.name);
+      const branch = element('div', '→ ' + call.name + ' · ' +
+        (result ? (result.error ? '오류 반환' : '결과 반환') : '실행 중'));
+      branch.className = 'branch';
+      branches.append(branch);
+    }
+    state = active.length ? '도구 실행 중 · ' + active.join(', ') :
+      (calls.length ? '도구 결과 반환' : '응답 수신');
+  } else if (!terminal) {
+    flow.append(element('span', state));
+  }
+  if (terminal) {
+    state = labels[terminal];
+    flow.append(element('strong', state));
+  }
+  list.append(li);
+  return number + '회차 · ' + state;
+}
+function render() {
+  const run = pick.value || Object.keys(runs)[0];
+  const rows = runs[run] || [];
+  const signature = JSON.stringify([run,rows]);
+  if (lastRender === signature) return;
+  lastRender = signature;
+  list.replaceChildren();
+  const last = rows.at(-1);
+  let status = last ? (labels[last.event] || '실행 중') : '실행 대기 중';
+  if (rows[0]?.timeline_version === 2 && rows.some(row => row.event === 'model_request')) {
+    const rounds = new Map();
+    for (const row of rows) {
+      if (row.event === 'model_request') rounds.set(row.round, {results:new Map()});
+      const round = rounds.get(row.round);
+      if (!round) continue;
+      if (row.event === 'model_response') round.blocks = row.blocks;
+      if (row.event === 'tool_result') round.results.set(row.id,row);
+    }
+    for (const [number, round] of rounds) {
+      const terminal = last.round === number && ['done','failed'].includes(last.event) ? last.event : null;
+      status = drawRound(run, number, round, terminal);
+    }
+  } else legacy(rows);
+  statusText.textContent = run ? status + ' · ' + run : status;
+}
+pick.onchange = render;
+async function refresh() {
+  try {
+    const response = await fetch('/runs');
+    if (!response.ok) throw Error();
+    runs = await response.json();
+    const keys = Object.keys(runs);
+    if (JSON.stringify(keys) !== JSON.stringify(Array.from(pick.options).slice(1).map(o=>o.value))) {
+      const chosen = pick.value;
+      pick.replaceChildren(new Option('최근 실행 따라가기',''), ...keys.map(k => new Option(k,k)));
+      pick.value = chosen in runs ? chosen : '';
+    }
+    render();
+  } catch {
+    lastRender = null;
+    statusText.textContent = '연결 끊김 · 다시 연결하는 중';
+  } finally { setTimeout(refresh,750); }
+}
 refresh();
-</script></html>
+</script>
+</html>

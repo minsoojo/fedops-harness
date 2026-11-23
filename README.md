@@ -74,3 +74,20 @@ OpenShell 0.1.9 게이트웨이를 mTLS로 기동해 로그인, provider 프로�
 - 키 없는 연습: `docker build -t fedops-claude:2.1.330 .` 후 `python3 agent.py replay-loop`. 격리된 Docker 안에서 모의 모델 응답에 따라 실제 Claude Code가 Read와 Edit를 실행한다.
 - 실제 작업: `python3 agent.py setup` 후 기존 ask, edit, live-demo 명령을 사용한다. 이 버전의 기본 샌드박스는 새 worker를 포함하는 `fedops-agent-loop`다.
 - 창은 0.75초마다 로컬 실행 기록을 읽는다. 실행을 선택하면 해당 작업의 기록을 다시 볼 수 있다.
+
+### 모델 회차별 다이어그램
+
+서버에서 `python3 viewer.py`로 뷰어를 열고 최근 실행 따라가기를 선택한다.
+다른 터미널에서 저장소 루트를 기준으로 실행한다.
+
+```sh
+docker build -t fedops-claude:2.1.330 .
+python3 agent.py replay-loop --wait-first
+```
+
+첫 모델 요청을 받은 모의 서버가 10초 동안 응답을 보류한다. 이때 브라우저에는
+‘1회차 · 모델 응답 대기 중’이 보인다. 응답이 오면 각 회차에서 모델 출력을 펼쳐
+텍스트와 도구 인자를 읽을 수 있다. 이 실습은 Read, Edit, 최종 답변 순으로
+세 회차를 기록한다. 실행 선택에서 같은 기록을 다시 열 수 있다.
+이전 형식의 실행은 시간순 이벤트 목록으로 열린다. 기존 OpenShell 샌드박스에서
+새 worker를 쓰려면 새 이름을 지정해 setup과 후속 명령에 같은 FEDOPS_SANDBOX를 사용한다.

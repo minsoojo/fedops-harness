@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from unittest.mock import patch
 
 if Path("/opt/fedops/worker.py").exists():
@@ -14,12 +15,14 @@ if Path("/opt/fedops/worker.py").exists():
 import worker
 
 
-def replay(work, emit=None):
+def replay(work, emit=None, wait_first=False):
+    first_request = True
     class Messages(BaseHTTPRequestHandler):
         def log_message(self, *args):
             pass
 
         def do_POST(self):
+            nonlocal first_request
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             if "count_tokens" in self.path:
                 self.send_response(200)
@@ -27,6 +30,11 @@ def replay(work, emit=None):
                 self.end_headers()
                 self.wfile.write(b'{"input_tokens":10}')
                 return
+            if first_request and wait_first:
+                first_request = False
+                print("모의 서버가 첫 모델 요청을 받았습니다. 응답을 10초 보류합니다.", file=sys.stderr, flush=True)
+                time.sleep(10)
+                print("모의 서버가 첫 응답 전송을 시작합니다.", file=sys.stderr, flush=True)
             results = [b for m in request["messages"] for b in m["content"]
                        if isinstance(b, dict) and b.get("type") == "tool_result"]
             path = str(work / worker.TARGET)
@@ -89,4 +97,4 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as folder:
         def emit(item):
             print(json.dumps(item), flush=True)
-        replay(Path(folder), emit if "--timeline" in sys.argv else None)
+        replay(Path(folder), emit if "--timeline" in sys.argv else None, "--wait-first" in sys.argv)

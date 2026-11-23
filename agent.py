@@ -66,11 +66,17 @@ def run_turn(folder, mode, question, memory=fedops.MEMORY):
 
 def trace_run(folder, mode, job):
     with (folder / "timeline.jsonl").open("w", buffering=1) as timeline:
+        current_round = None
         def record(event, **fields):
+            nonlocal current_round
+            if event == "model_request":
+                current_round = fields["round"]
+            if event in {"failed", "done"} and current_round is not None:
+                fields["round"] = current_round
             item = dict(event=event, time=datetime.now(timezone.utc).isoformat(), **fields)
             timeline.write(json.dumps(item) + "\n")
 
-        record("start", mode=mode)
+        record("start", mode=mode, timeline_version=2)
         try:
             report = job(record)
         except BaseException:
@@ -110,11 +116,13 @@ def _run_turn(folder, mode, question, memory, record):
     return report
 
 
-def replay_loop():
+def replay_loop(wait_first=False):
     folder = run_folder("replay")
     def job(record):
         cmd = ["docker", "run", "--rm", "-i", "--network", "none", "--user", "1000:1000",
                "-e", "HOME=/tmp", IMAGE, "python3", "-", "--timeline"]
+        if wait_first:
+            cmd.append("--wait-first")
         for item in messages(cmd, (ROOT / "replay.py").read_text(), 370):
             record(**item)
     trace_run(folder, "replay", job)
@@ -149,14 +157,15 @@ def main():
     sub = parser.add_subparsers(dest="mode", required=True)
     sub.add_parser("setup")
     sub.add_parser("live-demo")
-    sub.add_parser("replay-loop")
+    sub.add_parser("replay-loop").add_argument("--wait-first", action="store_true",
+                                                help="모의 서버의 첫 모델 응답을 10초 보류")
     for mode in ("ask", "edit"):
         sub.add_parser(mode).add_argument("question")
     args = parser.parse_args()
     if args.mode == "setup":
         setup()
     elif args.mode == "replay-loop":
-        replay_loop()
+        replay_loop(args.wait_first)
     elif args.mode == "live-demo":
         live_demo()
     else:
