@@ -1,0 +1,25 @@
+--- a/src/python/fedops/simulation/fl_strategy/aggregation.py
++++ b/src/python/fedops/simulation/fl_strategy/aggregation.py
+@@ -35,12 +35,6 @@
+     Metrics
+         The weighted average metric.
+     """
+-    # Multiply accuracy of each client by number of examples used
+-    
+-    # total num_examples
+-    examples = [num_examples for num_examples, _ in metrics]
+-    total_examples = sum(examples)
+-
+     # Metrics key like acc, auc etc.
+     keys = set(k for _, metric in metrics for k in metric.keys())
+ 
+@@ -49,6 +43,9 @@
+     for key in keys:
+         performances = [num_examples * float(metric[key]) for num_examples, metric in metrics if key in metric]
+ 
++        total_examples = sum(
++            num_examples for num_examples, metric in metrics if key in metric
++        )
+         weighted_performance = sum(performances) / total_examples if total_examples > 0 else 0
+ 
+         weighted_performances[key] = weighted_performance
