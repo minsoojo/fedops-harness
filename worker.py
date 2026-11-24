@@ -3,13 +3,14 @@ import ast
 import difflib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
-from queue import Queue
+from queue import Empty, Queue
 from stream_loop import messages
 
 APP = Path(__file__).resolve().parent
@@ -47,7 +48,8 @@ class RoundRecorder:
             self.emit(dict(event=event, **fields))
 
     def observe_request(self, line):
-        if line.rstrip().partition(" ")[2] == "[DEBUG] [API REQUEST] /v1/messages source=sdk":
+        if re.fullmatch(r"\[DEBUG\] \[API REQUEST\] (?:https://openrouter\.ai)?(?:/api)?/v1/messages(?:\?[^ ]*)? source=sdk",
+                        line.rstrip().partition(" ")[2]):
             self.sent += 1
             self.publish("model_request", round=self.sent)
             self.requests.put(self.sent)
@@ -58,8 +60,13 @@ class RoundRecorder:
         kind = packet.get("type")
         stream = packet.get("event", {})
         if kind == "stream_event" and stream.get("type") == "message_start":
-            # stdout and stderr are drained independently. Consume starts in send order.
+            # Retries can dispatch several requests before the first response.
             self.current = self.requests.get(timeout=5)
+            while True:
+                try:
+                    self.current = self.requests.get_nowait()
+                except Empty:
+                    break
             self.blocks = []
         elif kind == "assistant" and self.current is not None:
             for block in packet.get("message", {}).get("content", []):
@@ -96,6 +103,8 @@ def execute(request, work, emit=None):
     shutil.copyfile(APP / "evidence/aggregation.py", target)
     shutil.copyfile(APP / "check.py", work / "check.py")
     prompt = request["brief"] + "\n작업 복사본의 집계 코드 위치: " + TARGET
+    if mode == "ask":
+        prompt += "\n질문에 답할 근거가 위에 있으면 해당 출처와 함께 바로 답하세요."
     toolset = "Read"
     report = {}
     if mode == "edit":
@@ -124,6 +133,11 @@ def execute(request, work, emit=None):
         if recorder:
             recorder.observe(event)
         if event.get("type") == "result":
+            if event.get("is_error"):
+                detail = event.get("result") or event.get("errors") or event.get("subtype")
+                message = str(detail).replace(token, "[redacted]")
+                message = re.sub(r"sk-[A-Za-z0-9_-]+", "[redacted]", message)
+                raise RuntimeError(f"Claude: {message[:1200]}")
             answer = event
         previous = len(trace)
         for block in event.get("message", {}).get("content", []):
@@ -138,8 +152,6 @@ def execute(request, work, emit=None):
     if answer is None:
         raise RuntimeError("Claude 최종 결과 이벤트가 없습니다.")
     report["trace"] = trace
-    if answer.get("is_error"):
-        raise RuntimeError(str(answer.get("result", "Claude error")).replace(token, "[redacted]"))
     report.update(result=answer.get("result"), structured=answer.get("structured_output"),
                   usage=answer.get("usage"), session=answer.get("session_id"))
     if mode == "edit":

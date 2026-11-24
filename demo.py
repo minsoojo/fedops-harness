@@ -30,7 +30,7 @@ def main():
     project = Path(__file__).resolve().parent
     with TemporaryDirectory(prefix="fedops-demo-") as temp:
         workdir = Path(temp)
-        for name in ("fedops.py", "PROJECT.md", "AGENTS.md", "CLAUDE.md"):
+        for name in ("fedops.py", "source_context.py", "PROJECT.md", "AGENTS.md", "CLAUDE.md"):
             shutil.copy2(project / name, workdir / name)
         shutil.copytree(project / "evidence", workdir / "evidence")
 

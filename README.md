@@ -91,3 +91,39 @@ python3 agent.py replay-loop --wait-first
 세 회차를 기록한다. 실행 선택에서 같은 기록을 다시 열 수 있다.
 이전 형식의 실행은 시간순 이벤트 목록으로 열린다. 기존 OpenShell 샌드박스에서
 새 worker를 쓰려면 새 이름을 지정해 setup과 후속 명령에 같은 FEDOPS_SANDBOX를 사용한다.
+
+## 질문에 들어가는 FedOps 컨텍스트
+
+`ask`와 `edit`는 호스트에서 만든 동일한 형식의 brief를 받는다. 아래 명령으로 모델 호출 전에 근거를 확인할 수 있다.
+
+```sh
+python3 fedops.py brief 'weighted_average의 정의와 설정은 어디에 있나?'
+python3 fedops.py brief 'get_top_clients_by_metrics를 호출하는 함수는?'
+python3 fedops.py brief 'FedOps Agent Studio는 로컬 학습과 FL 참여를 어떻게 연결하나?'
+```
+
+| 소스 | 범위와 출처 |
+|---|---|
+| 저장소 | 기준 커밋 `3cd0842`에서 Python 함수·클래스 선언과 YAML의 `_target_` 줄을 검색한다. 결과 링크는 원본 커밋의 해당 줄을 연다. |
+| 문서 | FedOps 1.3 공식 Overview의 Agent Studio 설명, URL, 확인일을 제공한다. |
+| Graphify | 같은 커밋에서 추출한 코드 관계의 양 끝점, 방향, 종류, 신뢰도와 근거 위치를 제공한다. `INFERRED`는 Graphify의 추론이다. |
+
+검색은 로컬에서 수행한다. 저장소와 그래프에서 질문의 식별자·경로 및 한국어 대응어로 최대 네 건씩 고른다. 특정 심볼을 아는 경우 질문에 정확한 이름을 넣으면 된다. 기본 조회에는 Python 표준 라이브러리와 저장소에 포함된 색인만 필요하다.
+
+색인을 다시 만들 때는 아래 명령을 저장소 루트에서 실행한다. 처음 한 번 빈 캐시에서 시작하는 예다. Graphify 버전은 이번 추출에 사용한 버전으로 고정했다.
+
+```sh
+mkdir -p .context-cache
+git clone https://github.com/gachon-CCLab/FedOps.git .context-cache/FedOps
+python3 build_context.py repository .context-cache/FedOps
+python3 -m venv .context-cache/venv
+. .context-cache/venv/bin/activate
+python -m pip install graphifyy==0.9.110
+python build_context.py graph .context-cache/FedOps
+```
+
+그래프 재생성은 고정 커밋의 임시 체크아웃에서 Graphify의 `--code-only` 추출을 실행한다. 소스 경로와 줄 번호가 있는 관계를 배포용 색인에 담는다. 문서 요약을 갱신할 때는 `evidence/fedops-overview.md`의 원문과 확인일을 함께 대조한다.
+
+뷰어에서 **질문 실행**을 누르면 선택한 OpenShell 샌드박스에서 실제 ask를 시작하고, 발급된 실행 ID의 회차와 최종 답변을 표시한다. **컨텍스트 조회**는 모델 호출 전에 근거만 확인하는 버튼이다. 회차 기록 worker를 설치한 샌드박스가 `fedops-ui-rounds`라면 `FEDOPS_SANDBOX=fedops-ui-rounds python3 viewer.py`로 뷰어를 시작한다.
+
+OpenRouter가 유료 모델에 HTTP 402를 반환하는 계정에서는 뷰어 시작 시 무료 라우터를 명시할 수 있다. 예: `FEDOPS_MODEL=openrouter/free FEDOPS_SANDBOX=fedops-ask-rounds python3 viewer.py`. 이 샌드박스에는 OpenRouter의 /api/v1/messages 요청을 인식하는 worker가 필요하다. 실행 실패 시 해당 실행 폴더의 runtime.log에서 Claude의 API 오류를 확인한다.

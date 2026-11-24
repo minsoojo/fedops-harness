@@ -2,14 +2,28 @@
 <html lang="ko">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>FedOps 실행 타임라인</title>
+<title>FedOps 하네스</title>
 <style>
 *{box-sizing:border-box}body{margin:0;background:#f4f7fa;color:#183248;font:16px/1.6 system-ui,sans-serif}main{max-width:1000px;margin:5vh auto;padding:24px}h1{letter-spacing:-.04em}select{padding:8px;max-width:100%}ol{padding:0;list-style:none}li{background:white;border:1px solid #dbe3e9;border-radius:10px;margin:12px 0;padding:16px}h2{font-size:1rem;margin:0 0 8px}.flow{display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}.branches{display:grid;gap:6px}.branch{border-left:2px solid #69a399;padding-left:10px}summary{cursor:pointer;color:#066257}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.9rem}details{min-width:0;max-width:100%}#status{font-weight:600}time{margin-right:1em;color:#536677}
+
+li.round {position:relative;margin:0}
+li.round + li.round {margin-top:3rem}
+.transition {position:absolute;bottom:100%;left:24px;height:3rem;display:flex;align-items:center;padding-left:16px;border-left:2px solid #397b70;font-size:.86rem;color:#325f57}
+.transition::after {content:"";position:absolute;bottom:2px;left:-5px;width:6px;height:6px;border:solid #397b70;border-width:0 2px 2px 0;transform:rotate(45deg)}
+
+body{font-family:Inter,system-ui,sans-serif;background:#edf3f2}main{margin:2vh auto}h1{font-size:clamp(2rem,5vw,3rem);margin:0 0 20px}form{background:#143f40;color:white;padding:22px;border-radius:14px;display:grid;gap:10px}textarea{font:inherit;color:#183248;border:0;border-radius:6px;padding:12px;resize:vertical;width:100%}button{justify-self:end;padding:9px 16px;border:0;border-radius:6px;font:inherit;font-weight:650;color:#103f38;background:#b8eedb;cursor:pointer}button:disabled{opacity:.7}section>h2{font-size:1.35rem;margin-top:30px}#evidence details{background:white;border:1px solid #dbe3e9;padding:10px 16px;border-radius:8px;margin:6px 0}#evidence a{color:#066257}
 </style>
 <main>
-<h1>FedOps 실행 타임라인</h1>
+<h1>FedOps 하네스</h1>
+<form id="query">
+<label for="question">에이전트에 전달할 질문</label>
+<textarea id="question" rows="2" maxlength="2000" required placeholder="예: weighted_average는 어디에서 설정하나요?"></textarea>
+<div><button value="ask">질문 실행</button> <button value="brief">컨텍스트 조회</button></div>
+</form>
+<p id="feedback" role="status"></p><div id="evidence"></div>
+<section><h2>실행 타임라인</h2>
 <label>실행 선택 <select id="pick"><option value="">최근 실행 따라가기</option></select></label>
-<p id="status" role="status"></p><ol id="events"></ol>
+<p id="status" role="status"></p><ol id="events"></ol></section>
 </main>
 <script>
 const pick = document.querySelector('#pick');
@@ -17,7 +31,7 @@ const statusText = document.querySelector('#status');
 const list = document.querySelector('#events');
 const expanded = new Map();
 const labels = {start:'작업 시작', done:'완료', failed:'실패'};
-let runs = {}, lastRender;
+let runs = {}, lastRender, selectedRun = '';
 function element(tag, text) {
   const node = document.createElement(tag);
   if (text !== undefined) node.textContent = text;
@@ -36,13 +50,21 @@ function legacy(rows) {
     list.append(li);
   }
 }
-function drawRound(run, number, round, terminal) {
+function drawRound(run, number, round, terminal, previous, latest) {
   const li = element('li'), flow = element('div'), branches = element('div');
+  li.className = 'round';
+  if (previous) {
+    const results = (previous.blocks || [])
+      .filter(block => block.type === 'tool_use' && previous.results.has(block.id));
+    const names = [...new Set(results.map(block => block.name))].join(' · ');
+    const transition = element('span', names ? names + ' 결과' : '');
+    transition.className = 'transition';
+    li.append(transition);
+  }
   flow.className = 'flow';
   branches.className = 'branches';
   li.append(element('h2', number + '회차'), flow);
-  flow.append(element('span', '모델 요청 →'));
-  let state = '모델 응답 대기 중';
+  let state = latest ? '모델 응답 대기 중' : '응답 기록 없음';
   if (round.blocks) {
     const calls = round.blocks.filter(block => block.type === 'tool_use');
     const final = terminal === 'done' && !calls.length;
@@ -78,7 +100,7 @@ function drawRound(run, number, round, terminal) {
   return number + '회차 · ' + state;
 }
 function render() {
-  const run = pick.value || Object.keys(runs)[0];
+  const run = selectedRun || Object.keys(runs)[0];
   const rows = runs[run] || [];
   const signature = JSON.stringify([run,rows]);
   if (lastRender === signature) return;
@@ -95,24 +117,79 @@ function render() {
       if (row.event === 'model_response') round.blocks = row.blocks;
       if (row.event === 'tool_result') round.results.set(row.id,row);
     }
+    const latestRound = Array.from(rounds.keys()).at(-1);
+    let previous;
     for (const [number, round] of rounds) {
       const terminal = last.round === number && ['done','failed'].includes(last.event) ? last.event : null;
-      status = drawRound(run, number, round, terminal);
+      status = drawRound(run, number, round, terminal, previous, number === latestRound);
+      previous = round;
     }
   } else legacy(rows);
+  if (last?.event === 'done' && typeof last.answer === 'string') {
+    const card = list.querySelector('li.round:last-child details');
+    if (card && card.querySelector('summary').textContent === '최종 답변') {
+      card.replaceChildren(element('summary','최종 답변'), element('pre',last.answer));
+    } else {
+      const answer = element('li');
+      answer.append(element('strong','최종 답변'),element('pre',last.answer));
+      list.append(answer);
+    }
+  }
+  if (last?.event === 'failed') status += ' · 실행 로그를 확인하세요';
   statusText.textContent = run ? status + ' · ' + run : status;
 }
-pick.onchange = render;
+const form = document.querySelector('#query');
+const question = document.querySelector('#question');
+const evidence = document.querySelector('#evidence');
+const feedback = document.querySelector('#feedback');
+form.onsubmit = async event => {
+  event.preventDefault();
+  const value = question.value.trim();
+  evidence.replaceChildren();
+  if (!value) { feedback.textContent = '질문을 입력하세요.'; question.focus(); return; }
+  const action = event.submitter?.value || 'ask';
+  for (const button of form.querySelectorAll('button')) button.disabled = true;
+  feedback.textContent = action === 'ask' ? '실행을 시작하는 중…' : '근거 조회 중…';
+  try {
+    const response = await fetch('/' + action, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(value)});
+    if (!response.ok) throw Error();
+    if (action === 'ask') {
+      selectedRun = (await response.json()).run;
+      if (!Array.from(pick.options).some(o => o.value === selectedRun)) pick.add(new Option(selectedRun, selectedRun));
+      pick.value = selectedRun;
+      feedback.textContent = '제출한 질문 · ' + value;
+      render();
+      return;
+    }
+    for (const section of (await response.text()).trim().split(/\n(?=##? )/)) {
+      const [heading,...lines] = section.split('\n');
+      const card = element('details'), content = element('pre');
+      card.append(element('summary', heading.replace(/^#+ /,'')),content);
+      card.open = heading.startsWith('## FedOps 저장소');
+      for (const part of lines.join('\n').trim().split(/(https:\/\/[^\s)]+)/g)) {
+        if (part.startsWith('https://')) {
+          const link = element('a',part);
+          link.href = part; link.target = '_blank'; link.rel = 'noopener noreferrer';
+          content.append(link);
+        } else content.append(part);
+      }
+      evidence.append(card);
+    }
+    feedback.textContent = '질문에 사용할 컨텍스트';
+  } catch { feedback.textContent = '조회에 실패했습니다. 다시 시도하세요.'; }
+  finally { for (const button of form.querySelectorAll('button')) button.disabled = false; }
+};
+pick.onchange = () => { selectedRun = pick.value; render(); };
 async function refresh() {
   try {
     const response = await fetch('/runs');
     if (!response.ok) throw Error();
     runs = await response.json();
     const keys = Object.keys(runs);
+    if (selectedRun && !keys.includes(selectedRun)) keys.unshift(selectedRun);
     if (JSON.stringify(keys) !== JSON.stringify(Array.from(pick.options).slice(1).map(o=>o.value))) {
-      const chosen = pick.value;
       pick.replaceChildren(new Option('최근 실행 따라가기',''), ...keys.map(k => new Option(k,k)));
-      pick.value = chosen in runs ? chosen : '';
+      pick.value = selectedRun;
     }
     render();
   } catch {

@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
+from source_context import print_matches
+
 ROOT = Path(__file__).resolve().parent
 MEMORY = ROOT / "memory" / "fedops.sqlite3"
 
@@ -24,6 +26,10 @@ def remember(topic, decision, source, memory=MEMORY):
 
 def brief(question, memory=MEMORY):
     print((ROOT / "PROJECT.md").read_text(encoding="utf-8").strip())
+    print_matches("repository", question)
+    print()
+    print((ROOT / "evidence/fedops-overview.md").read_text(encoding="utf-8").strip())
+    print_matches("graph", question)
     print("\n## 담당자가 저장한 프로젝트 결정")
     rows = []
     if memory.exists():

@@ -82,7 +82,10 @@ def trace_run(folder, mode, job):
         except BaseException:
             record("failed")
             raise
-        record("done")
+        if mode == "ask":
+            record("done", answer=report["result"])
+        else:
+            record("done")
         return report
 
 
