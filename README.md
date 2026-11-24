@@ -19,22 +19,22 @@ python3 offline.py
 사용자 → 호스트의 FedOps 하네스
            ├─ 현재 작업 + 공식 코드 근거 + SQLite의 최신 팀 결정
            └─ openshell sandbox exec (표준입력으로 전달)
-                 ├─ ask → Codex 포크 → OpenRouter → Grep·Read
+                 ├─ ask → Codex 포크 → OpenAI API → Grep·Read
                  └─ edit·recall → Claude Code → OpenRouter
            ← 답변·도구 이벤트·변경 패치·별도 검증기의 결과
 ```
 
 - **컨텍스트**는 호스트가 조립한다. `memory/fedops.sqlite3`에 승인된 결정과 출처를 보관하므로, 이 파일을 유지하면 샌드박스를 교체해도 팀 지식이 남는다. `PROJECT.md`에는 기준 커밋과 근거가 있다. 질문마다 Codex 프로세스와 임시 작업 디렉터리를 새로 만든다.
-- **권한**은 OpenShell의 파일 정책과 provider 프로필이 담당한다. 모델 키는 호스트에서 provider로 등록한다. OpenShell은 `openrouter.ai:443`에서 자격 증명을 처리한다. 질문용 프로필은 `/usr/local/bin/fedops-codex`, 편집용 프로필은 `/usr/local/bin/claude`를 허용한다.
+- **권한**은 OpenShell의 파일 정책과 provider 프로필이 담당한다. 모델 키는 호스트에서 provider로 등록한다. OpenShell은 질문에 `api.openai.com:443`, 편집과 recall에 `openrouter.ai:443`을 사용하며 각 호스트에서 자격 증명을 처리한다. 질문용 프로필은 `/usr/local/bin/fedops-codex`, 편집용 프로필은 `/usr/local/bin/claude`를 허용한다.
 - **편집 완료**는 원래 집계 함수에서 두 실패가 재현되고, 변경 범위가 함수 안이며, 이미지에 포함된 별도 검증기에서 일곱 개가 통과하고 패치가 생겼을 때다. 각 작업 복사본은 실행 후 폐기되며 패치는 호스트에 남는다.
 - **실행 기록**은 `runs/` 아래의 `brief.md`, `events.jsonl`(도구 이름·ID·성공 여부), `result.json`(응답·세션 ID·사용량), `runtime.log`다. 편집 작업에는 `before.log`, `after.log`, `change.patch`도 포함된다.
 - 단일 함수 실습에는 Claude Code 기본 실행 루프를 사용한다. 다중 에이전트 Dynamic Workflows는 이 버전에 포함하지 않았다.
 
-## OpenRouter를 연결해 실행하기
+## 모델 API 연결하기
 
 대상은 **Docker 드라이버를 사용하는 로컬 NVIDIA OpenShell 0.1.9 게이트웨이**다. Linux에서는 Landlock ABI v3 이상을 실제로 사용할 수 있어야 한다. 호스트에 Python, Docker, OpenShell을 준비하고, `openshell whoami`로 활성 게이트웨이를 확인한다. 배포판의 기본 샌드박스 이미지에 의존하지 않고 Claude Code 2.1.330을 고정한 이미지를 빌드한다. [NVIDIA 설치 가이드](https://docs.nvidia.com/openshell/v0.1.9/about/installation) · [OpenShell 샌드박스](https://docs.nvidia.com/openshell/v0.1.9/how-it-works/sandboxes/overview)
 
-프로젝트 루트의 `.env`에 `OPENROUTER_API_KEY=발급받은키` 한 줄을 저장한 뒤 (호스트 환경변수를 설정했다면 그 값이 우선한다) 아래 순서로 실행한다. 질문 기본 모델은 `openrouter/free`, 편집·recall 기본 모델은 `anthropic/claude-sonnet-4.6`이다. `FEDOPS_MODEL`은 공통 모델을, `FEDOPS_ASK_MODEL`은 질문 전용 모델을 지정한다. 모델 호출 요금은 OpenRouter 계정에 청구된다. [OpenRouter의 Claude Code 연동 문서](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration)
+프로젝트 루트의 `.env`에 질문용 `OPENAI_API_KEY`와 편집·recall용 `OPENROUTER_API_KEY`를 각각 설정한 뒤 (호스트 환경변수를 설정했다면 그 값이 우선한다) 아래 순서로 실행한다. 질문 기본 모델은 `gpt-4.1-mini`, 편집·recall 기본 모델은 `anthropic/claude-sonnet-4.6`이다. `FEDOPS_MODEL`은 편집·recall 모델을, `FEDOPS_ASK_MODEL`은 질문 전용 모델을 지정한다. 질문 호출은 OpenAI API 계정에 청구된다. [OpenRouter의 Claude Code 연동 문서](https://openrouter.ai/docs/guides/coding-agents/claude-code-integration)
 
 ```sh
 python3 agent.py setup
@@ -136,6 +136,12 @@ python3 agent.py setup-ask
 python3 viewer.py
 ```
 
-`setup-ask`는 체크아웃의 커밋과 수정 여부를 검사하고 Rust 소스에서 실행 파일을 빌드한다. 질문 전용 OpenShell 샌드박스 이름에는 빌드 커밋 앞 12자리가 들어간다. 같은 빌드의 다른 인스턴스는 `FEDOPS_ASK_SANDBOX`로 선택할 수 있다.
+`setup-ask`는 체크아웃의 커밋과 수정 여부를 검사하고 Rust 소스에서 실행 파일을 빌드한다. 질문 전용 OpenShell 샌드박스 이름에는 빌드 커밋 앞 8자리가 들어간다. 같은 빌드의 다른 인스턴스는 `FEDOPS_ASK_SANDBOX`로 선택할 수 있다.
 
 뷰어에서 **질문 실행**을 누르면 선택한 실행의 응답 대기, 도구 결과와 최종 답변을 볼 수 있다. `result.json`의 `engine`과 `revision`이 실행 엔진과 빌드 출처를 기록한다. `runtime.log`에는 공급자 오류가 남는다. Codex는 요청당 출력 예산을 무료 모델 4,096토큰, 그 외 1,024토큰으로 지정하고 실행당 최대 8회 한도를 검사한다. 편집과 recall은 Claude Code의 `--max-turns 8`을 사용한다.
+
+### 질문별 병렬 조사
+
+질문 하나를 보내면 OpenShell의 계획 세션이 필요한 출처를 선택한다. 하네스는 선택한 출처마다 독립된 Codex 프로세스를 동시에 시작한다. 저장소 담당은 고정 커밋에서 Grep·Read를 사용한다. docs 담당은 배포된 FedOps Overview를, Graphify 담당은 질문으로 검색한 그래프 근거를 읽는다. 합성 세션은 조사 결과와 팀 결정을 받아 출처가 있는 답변을 작성한다.
+
+타임라인의 **선택된 조사 에이전트**에서 출처별 진행 상태와 결과를 볼 수 있다. 역할이 표시된 회차는 실행 전체의 요청 전송 순서다. 계획과 합성을 포함해 질문당 최대 8회이며 일부 조사가 실패하면 성공한 출처로 답하고 누락을 표시한다.

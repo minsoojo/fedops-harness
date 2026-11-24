@@ -36,6 +36,11 @@ def brief(question, memory=MEMORY, *, for_agent=False):
     print()
     print((ROOT / "evidence/fedops-overview.md").read_text(encoding="utf-8").strip())
     print_matches("graph", question)
+    print_memory(memory)
+    print(f"\n## 현재 질문\n{question}")
+
+
+def print_memory(memory):
     print("\n## 담당자가 저장한 프로젝트 결정")
     rows = []
     if memory.exists():
@@ -49,7 +54,6 @@ def brief(question, memory=MEMORY, *, for_agent=False):
         print(f"- [기록 #{number} · {topic}] {decision}\n  근거 · {source} · {recorded}")
     if not rows:
         print("저장된 결정 없음")
-    print(f"\n## 현재 질문\n{question}")
 
 
 def nonempty(text):

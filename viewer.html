@@ -76,6 +76,7 @@ const pick = document.querySelector('#pick');
 const statusText = document.querySelector('#status');
 const list = document.querySelector('#events');
 const expanded = new Map();
+const roleNames = {plan:'조사 계획',repository:'FedOps 저장소',docs:'공식 docs',graph:'Graphify',synthesis:'답변 합성'};
 const labels = {start:'작업 시작', done:'완료', failed:'실패'};
 let runs = {}, lastRender, selectedRun = '';
 function element(tag, text) {
@@ -109,7 +110,7 @@ function drawRound(run, number, round, terminal, previous, latest) {
   }
   flow.className = 'flow';
   branches.className = 'branches';
-  li.append(element('h2', number + '회차'), flow);
+  li.append(element('h2', number + '회차' + (round.role ? ' · ' + roleNames[round.role] : '')), flow);
   let state = latest ? '모델 응답 대기 중' : '응답 기록 없음';
   if (round.blocks) {
     const calls = round.blocks.filter(block => block.type === 'tool_use');
@@ -154,21 +155,62 @@ function render() {
   list.replaceChildren();
   const last = rows.at(-1);
   let status = last ? (labels[last.event] || '실행 중') : '실행 대기 중';
+  const selection = rows.find(row => row.event === 'sources_selected');
+  if (selection) {
+    const panel = element('li');
+    panel.append(element('h2','선택된 조사 에이전트'));
+    if (rows.some(row => row.event === 'plan_fallback')) {
+      panel.append(element('p','계획 응답의 형식 오류로 질문에 포함된 출처를 선택했습니다.'));
+    }
+    const cards = element('div');
+    cards.style.cssText = 'display:flex;gap:.75rem;flex-wrap:wrap';
+    for (const role of selection.sources) {
+      const events = rows.filter(row => row.role === role);
+      const terminal = events.find(row => ['agent_done','agent_failed'].includes(row.event));
+      const state = terminal ? (terminal.event === 'agent_done' ? '완료' : '실패') :
+        (events.length ? '조사 중' : '시작 대기');
+      const card = element('div');
+      card.dataset.source = role;
+      card.append(element('strong',roleNames[role] + ' · ' + state));
+      const start = events.find(row => row.event === 'agent_start');
+      if (start) {
+        const elapsed = row => ((Date.parse(row.time) - Date.parse(rows[0].time)) / 1000).toFixed(1) + '초';
+        card.append(element('div',elapsed(start) + (terminal ? ' → ' + elapsed(terminal) : '부터')));
+      }
+      if (events.some(row => row.event === 'evidence_used')) card.append(element('div','근거 발췌 사용'));
+      if (terminal) {
+        const details = element('details');
+        const key = run + '/source/' + role;
+        details.open = expanded.get(key) || false;
+        details.ontoggle = () => { if (details.isConnected) expanded.set(key,details.open); };
+        details.append(element('summary','조사 결과'),element('pre',terminal.result || terminal.detail));
+        card.append(details);
+      }
+      cards.append(card);
+    }
+    panel.append(cards);
+    list.append(panel);
+  }
   if (rows[0]?.timeline_version === 2 && rows.some(row => row.event === 'model_request')) {
     const rounds = new Map();
     for (const row of rows) {
-      if (row.event === 'model_request') rounds.set(row.round, {results:new Map()});
+      if (row.event === 'model_request') rounds.set(row.round, {role:row.role,results:new Map()});
       const round = rounds.get(row.round);
       if (!round) continue;
       if (row.event === 'model_response') round.blocks = row.blocks;
       if (row.event === 'tool_result') round.results.set(row.id,row);
     }
     const latestRound = Array.from(rounds.keys()).at(-1);
-    let previous;
+    const waiting = new Map();
+    for (const row of rows) {
+      if (row.event === 'model_request') waiting.set(row.role, row.round);
+      if (['agent_failed','agent_done'].includes(row.event)) waiting.delete(row.role);
+    }
+    const previousByRole = new Map();
     for (const [number, round] of rounds) {
       const terminal = last.round === number && ['done','failed'].includes(last.event) ? last.event : null;
-      status = drawRound(run, number, round, terminal, previous, number === latestRound);
-      previous = round;
+      status = drawRound(run, number, round, terminal, previousByRole.get(round.role), number === waiting.get(round.role));
+      previousByRole.set(round.role,round);
     }
   } else legacy(rows);
   if (last?.event === 'done' && typeof last.answer === 'string') {

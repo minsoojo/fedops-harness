@@ -16,6 +16,7 @@ def print_matches(source, question):
     with gzip.open(EVIDENCE / (source + ".json.gz"), "rt", encoding="utf-8") as file:
         index = json.load(file)
     terms = set(re.findall(r"[a-z][a-z0-9_]+", question.lower()))
+    symbols = {term for term in terms if "_" in term}
     terms.update(word for korean, word in ALIASES.items() if korean in question)
     if "집계" in question and any(term in question for term in ("누락", "accuracy", "지표")):
         terms.add("weighted_average")
@@ -28,13 +29,13 @@ def print_matches(source, question):
         score = sum(8 if term in tokens else 4 if term in content else 1 if term in path.lower()
                     else 0 for term in terms)
         if score:
-            candidates.append((score, path.startswith("src/python/fedops/"), row))
+            candidates.append((len(symbols & tokens) if source == "graph" else 0, score, path.startswith("src/python/fedops/"), row))
     revision = index["revision"]
     title = "FedOps 저장소" if source == "repository" else f"Graphify {index['graphify_version']} · 코드 관계"
     print(f"\n## {title} · {revision[:7]}")
     if not candidates:
         print("질문과 일치하는 근거 없음")
-    for _, _, (path, line, *fields) in sorted(candidates, key=lambda c: (-c[0], -c[1], c[2]))[:4]:
+    for _, _, _, (path, line, *fields) in sorted(candidates, key=lambda c: (-c[0], -c[1], -c[2], c[3]))[:4]:
         if source == "repository":
             description = fields[0]
         else:

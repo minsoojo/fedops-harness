@@ -1,0 +1,21 @@
+id: fedops-codex-openai
+display_name: FedOps Codex via OpenAI
+description: Codex inference for the FedOps sandbox
+category: inference
+inference_capable: true
+credentials:
+  - name: api_key
+    description: OpenAI key
+    env_vars: [OPENAI_API_KEY]
+    required: true
+    auth_style: bearer
+    header_name: authorization
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.openai.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/bin/fedops-codex]

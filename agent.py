@@ -22,9 +22,9 @@ QUESTION = ("A는 표본 10개에서 accuracy 0.8을 보고하고 B는 30개에�
             "우리 팀이 정한 결과, B가 0을 보고할 때의 합의 결과, 결정 출처의 정확한 이름을 답해 줘.")
 
 
-CODEX_REV = "bca402fc40f66deacd7b3fc27d420c8a518d28d9"
-ASK_BOX = os.getenv("FEDOPS_ASK_SANDBOX", "fx-" + CODEX_REV[:12])
-ASK_MODEL = os.getenv("FEDOPS_ASK_MODEL") or os.getenv("FEDOPS_MODEL") or "openrouter/free"
+CODEX_REV = "84ea60b8997564cffe385af2259494f9bdf5c38d"
+ASK_BOX = os.getenv("FEDOPS_ASK_SANDBOX", "fedops-oa-" + CODEX_REV[:8])
+ASK_MODEL = os.getenv("FEDOPS_ASK_MODEL") or "gpt-4.1-mini"
 ASK_IMAGE = "fedops-codex:" + CODEX_REV[:12]
 
 
@@ -32,18 +32,18 @@ def exists(kind, name):
     return subprocess.run(["openshell", kind, "get", name], capture_output=True).returncode == 0
 
 
-def ensure_provider(name, profile):
+def ensure_provider(name, profile, credential="OPENROUTER_API_KEY"):
     if not exists("provider", name):
         provider_env = os.environ.copy()
-        if not provider_env.get("OPENROUTER_API_KEY"):
+        if not provider_env.get(credential):
             env_file = ROOT / ".env"
             if env_file.is_file():
                 for line in env_file.read_text(encoding="utf-8").splitlines():
                     key, sep, value = line.partition("=")
-                    if sep and key.strip() == "OPENROUTER_API_KEY":
+                    if sep and key.strip() == credential:
                         provider_env[key.strip()] = value.strip().strip("\"'")
-        if not provider_env.get("OPENROUTER_API_KEY"):
-            raise ValueError(".env 또는 환경변수에 OPENROUTER_API_KEY를 설정하세요.")
+        if not provider_env.get(credential):
+            raise ValueError(f".env 또는 환경변수에 {credential}를 설정하세요.")
         if subprocess.run(["openshell", "profile", "describe", name], capture_output=True).returncode:
             subprocess.run(["openshell", "profile", "import", "-f", str(ROOT / profile)], check=True)
         subprocess.run(["openshell", "provider", "create", "--name", name,
@@ -51,8 +51,8 @@ def ensure_provider(name, profile):
 
 
 def setup_ask():
-    name = "fedops-codex-router"
-    ensure_provider(name, "infra/codex-provider.yaml")
+    name = "fedops-codex-openai"
+    ensure_provider(name, "infra/openai-provider.yaml", "OPENAI_API_KEY")
     if not exists("sandbox", ASK_BOX):
         source = Path(os.getenv("FEDOPS_CODEX_SOURCE", ROOT.parent / "fedops-codex"))
         subprocess.run(["docker", "build", "--build-context", f"codex={source}",
@@ -123,20 +123,29 @@ def trace_run(folder, mode, job):
 
 def _run_turn(folder, mode, question, memory, record):
     buf = StringIO()
-    with redirect_stdout(buf):
-        fedops.brief(question, memory, for_agent=True)
-    brief = buf.getvalue()
     if mode == "ask":
-        brief += ("\n한국어로 질문의 범위에 맞게 답하세요. 위치를 묻는 질문은 설정을 확인한 뒤 "
-                  "파일 경로, 설정 키, 해당 줄 링크를 1~2문장으로 답하세요.\n")
+        with redirect_stdout(buf):
+            fedops.print_matches("graph", question)
+        graph = buf.getvalue()
+        buf = StringIO()
+        with redirect_stdout(buf):
+            fedops.print_memory(memory)
+        req = dict(mode=mode, question=question, model=ASK_MODEL, graph=graph,
+                   docs=(ROOT / "evidence/fedops-overview.md").read_text(),
+                   memory=buf.getvalue(), source_revision=fedops.REVISION)
+        brief = question
+    else:
+        with redirect_stdout(buf):
+            fedops.brief(question, memory, for_agent=True)
+        brief = buf.getvalue()
+        req = dict(mode=mode, stream=True, brief=brief, model=MODEL)
     (folder / "brief.md").write_text(brief)
-    req = {"mode": mode, "stream": True, "brief": brief, "model": ASK_MODEL if mode == "ask" else MODEL}
     cmd = ["openshell", "sandbox", "exec", "-n", BOX, "--", "python3", "/opt/fedops/worker.py"]
     if mode == "ask":
         cmd = ["openshell", "sandbox", "exec", "-n", ASK_BOX, "--", "python3", "/opt/fedops/codex_ask.py"]
     report = None
     with (folder / "runtime.log").open("w") as log:
-        for packet in messages(cmd, json.dumps(req), 370, stderr=log):
+        for packet in messages(cmd, json.dumps(req), 950 if mode == "ask" else 370, stderr=log):
             if "progress" in packet:
                 record(**packet["progress"])
             else:

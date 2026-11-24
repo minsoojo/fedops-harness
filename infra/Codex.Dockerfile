@@ -33,4 +33,4 @@ COPY --from=build /usr/local/bin/fedops-codex /usr/local/bin/fedops-codex
 RUN mkdir -p /sandbox && chmod 1777 /sandbox
 WORKDIR /sandbox
 ADD evidence/repository-source.tar.gz /opt/fedops/repository/
-COPY --chmod=644 codex_ask.py repository_mcp.py stream_loop.py /opt/fedops/
+COPY --chmod=644 research.py codex_ask.py repository_mcp.py stream_loop.py /opt/fedops/

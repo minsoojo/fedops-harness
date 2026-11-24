@@ -8,23 +8,22 @@ import tempfile
 from stream_loop import messages
 
 
-def ask(request, work, emit):
+def ask(request, work, emit, *, instructions_text, budget, repository=False):
     env = os.environ.copy()
     home = work / "codex"
     home.mkdir(mode=0o700)
-    env.update(CODEX_HOME=str(home), HOME=str(work), FEDOPS_ASK="1")
+    env.update(CODEX_HOME=str(home), HOME=str(work), FEDOPS_ASK="1", FEDOPS_REQUEST_LIMIT=str(budget))
     instructions = home / "instructions.md"
-    instructions.write_text("FedOps 질문에 한국어로 간결하게 답한다. 저장소의 코드나 설정은 Grep으로 검색한 뒤 "
-                            "Read로 해당 줄을 확인하고 기준 커밋의 파일과 줄 링크를 인용한다.")
-    (home / "config.toml").write_text(f'model_instructions_file = "{instructions}"\n' + """
-model_provider = "openrouter"
+    instructions.write_text(instructions_text)
+    config = f'model_instructions_file = "{instructions}"\n' + """
+model_provider = "fedops-openai"
 approval_policy = "never"
 sandbox_mode = "read-only"
 web_search = "disabled"
-[model_providers.openrouter]
-name = "OpenRouter"
-base_url = "https://openrouter.ai/api/v1"
-env_key = "OPENROUTER_API_KEY"
+[model_providers.fedops-openai]
+name = "OpenAI API"
+base_url = "https://api.openai.com/v1"
+env_key = "OPENAI_API_KEY"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
@@ -36,12 +35,16 @@ tool_search = false
 multi_agent = false
 multi_agent_v2 = false
 shell_tool = false
+"""
+    if repository:
+        config += """
 [mcp_servers.repository]
 command = "/usr/local/bin/python3"
 args = ["-I", "/opt/fedops/repository_mcp.py"]
 required = true
 default_tools_approval_mode = "approve"
-""")
+"""
+    (home / "config.toml").write_text(config)
     revision = Path("/opt/fedops/codex-revision").read_text().strip()
     last_message = work / "answer"
     cmd = ["/usr/local/bin/fedops-codex", "--json", "--ephemeral", "--skip-git-repo-check",
@@ -86,7 +89,7 @@ default_tools_approval_mode = "approve"
             message = packet.get("message") or packet.get("error", {}).get("message")
             if message and message != failure:
                 failure = message
-                print(failure.replace(env.get("OPENROUTER_API_KEY") or "\0", "[redacted]")[:1200],
+                print(failure.replace(env.get("OPENAI_API_KEY") or "\0", "[redacted]")[:1200],
                       file=sys.stderr, flush=True)
     if usage is None or not number or not last_message.is_file() or not last_message.read_text().strip():
         raise ValueError("Codex 질문 실행에서 최종 답변을 받지 못했습니다")
@@ -98,4 +101,5 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory(dir="/sandbox", prefix="fedops-ask-") as folder:
         def emit(**fields):
             print(json.dumps({"progress": fields}), flush=True)
-        print(json.dumps(ask(json.load(sys.stdin), Path(folder), emit)), flush=True)
+        from research import investigate
+        print(json.dumps(investigate(json.load(sys.stdin), Path(folder), ask, emit)), flush=True)
