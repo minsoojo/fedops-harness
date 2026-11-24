@@ -14,6 +14,7 @@ from queue import Empty, Queue
 from stream_loop import messages
 
 APP = Path(__file__).resolve().parent
+MAX_AGENT_TURNS = 8
 TARGET = "src/python/fedops/simulation/fl_strategy/aggregation.py"
 SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -116,7 +117,7 @@ def execute(request, work, emit=None):
         prompt += ("\nweighted_average 본문만 수정하고, python3 -I -B check.py " + TARGET
                    + " 로 검사하세요. 실패하면 고치고 다시 검사하세요.")
     args = ["claude", "-p", "--no-session-persistence", "--output-format", "stream-json", "--verbose",
-            "--model", model, "--tools", toolset, "--permission-mode", "dontAsk",
+            "--max-turns", str(MAX_AGENT_TURNS), "--model", model, "--tools", toolset, "--permission-mode", "dontAsk",
             "--allowedTools", "Read"]
     if mode == "edit":
         args += ["Edit", "Bash(python3 -I -B check.py " + TARGET + ")"]
@@ -133,6 +134,8 @@ def execute(request, work, emit=None):
         if recorder:
             recorder.observe(event)
         if event.get("type") == "result":
+            if event.get("subtype") == "error_max_turns":
+                raise RuntimeError(f"Claude Code 실행 한도 도달 · 최대 {MAX_AGENT_TURNS}턴")
             if event.get("is_error"):
                 detail = event.get("result") or event.get("errors") or event.get("subtype")
                 message = str(detail).replace(token, "[redacted]")

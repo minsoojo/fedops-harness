@@ -12,18 +12,64 @@ li.round + li.round {margin-top:3rem}
 .transition::after {content:"";position:absolute;bottom:2px;left:-5px;width:6px;height:6px;border:solid #397b70;border-width:0 2px 2px 0;transform:rotate(45deg)}
 
 body{font-family:Inter,system-ui,sans-serif;background:#edf3f2}main{margin:2vh auto}h1{font-size:clamp(2rem,5vw,3rem);margin:0 0 20px}form{background:#143f40;color:white;padding:22px;border-radius:14px;display:grid;gap:10px}textarea{font:inherit;color:#183248;border:0;border-radius:6px;padding:12px;resize:vertical;width:100%}button{justify-self:end;padding:9px 16px;border:0;border-radius:6px;font:inherit;font-weight:650;color:#103f38;background:#b8eedb;cursor:pointer}button:disabled{opacity:.7}section>h2{font-size:1.35rem;margin-top:30px}#evidence details{background:white;border:1px solid #dbe3e9;padding:10px 16px;border-radius:8px;margin:6px 0}#evidence a{color:#066257}
+
+#proof{scroll-margin:1rem}
+.proof-panel{margin:0;background:white;border:1px solid #cdded9;border-radius:14px;padding:clamp(12px,2vw,24px)}
+.proof-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.proof-node{padding:10px;background:#edf6f1;border-top:3px solid #397b70;border-radius:4px;overflow-wrap:anywhere}
+.proof-node.denied{background:#fff3e6;border-color:#ab6627}
+.proof-node strong,.proof-node code{display:block}.proof-node code{font-size:.82rem}
+.proof-join{text-align:center;padding:9px 0;color:#355e56}
+.proof-scores{display:flex;align-items:center;justify-content:center;gap:clamp(8px,3vw,32px);text-align:center}
+.proof-scores b{display:block}.proof-panel figcaption{margin-top:14px;font-size:.82rem;color:#536677}
+
+body{display:grid;grid-template-columns:clamp(142px,19vw,230px) minmax(0,1fr);min-height:100vh}
+aside{background:#143f40;color:white;padding:28px 12px}
+aside strong{display:block;padding:0 12px;margin-bottom:28px}
+nav{display:grid;gap:6px}nav a{color:#d8eeeb;text-decoration:none;padding:10px 12px;border-radius:8px}nav a[aria-current]{background:#d7eee8;color:#123e3c;font-weight:700}
+main{width:100%;max-width:980px;min-width:0;margin:0 auto;padding:clamp(16px,4vw,56px)}
+#chat:not([hidden]){display:flex;flex-direction:column;min-height:calc(100dvh - 2 * clamp(16px,4vw,56px))}
+#conversation{flex:1;display:flex;flex-direction:column;gap:10px}
+.message{white-space:pre-wrap;overflow-wrap:anywhere;max-width:90%;padding:12px 16px;border-radius:14px;background:white;border:1px solid #d4e1dd}
+.mine{align-self:flex-end;background:#d9eee6}
+#query{background:white;color:#183248;border:1px solid #cbdbd7;padding:14px}
+#query div{text-align:right}#query textarea{border:1px solid #cbdbd7}
+@media(max-width:620px){body{grid-template-columns:82px minmax(0,1fr)}aside{padding:18px 4px}aside strong,nav a{padding:8px;font-size:.83rem}main{padding:16px 10px}.proof-grid{grid-template-columns:1fr}#query button{padding:6px;font-size:.82rem}}
+
 </style>
+<aside><strong>FedOps 하네스</strong>
+<nav aria-label="화면 선택"><a href="#chat" aria-current="page">채팅</a><a href="#timeline">실행 타임라인</a><a href="#proof">검증기 보호 실험</a><a href="#graph">Graphify 그래프</a></nav></aside>
 <main>
-<h1>FedOps 하네스</h1>
+<section id="chat"><h1>채팅</h1>
+<div id="conversation" role="log" aria-label="대화"></div>
+<p id="feedback" role="status"></p><div id="evidence"></div>
 <form id="query">
 <label for="question">에이전트에 전달할 질문</label>
 <textarea id="question" rows="2" maxlength="2000" required placeholder="예: weighted_average는 어디에서 설정하나요?"></textarea>
 <div><button value="ask">질문 실행</button> <button value="brief">컨텍스트 조회</button></div>
 </form>
-<p id="feedback" role="status"></p><div id="evidence"></div>
-<section><h2>실행 타임라인</h2>
+</section>
+<section id="timeline" hidden><h1>실행 타임라인</h1>
 <label>실행 선택 <select id="pick"><option value="">최근 실행 따라가기</option></select></label>
 <p id="status" role="status"></p><ol id="events"></ol></section>
+<section id="proof" hidden aria-labelledby="proof-heading">
+<h2 id="proof-heading">OpenShell 검증기 보호 실험</h2>
+<figure class="proof-panel">
+<div class="proof-grid">
+<div class="proof-node"><strong>작업 복사본 · 쓰기 허용</strong><code>/sandbox/…/aggregation.py</code></div>
+<div class="proof-node denied"><strong>원본 검증기 · 쓰기 거부</strong><code>/opt/fedops/check.py</code><small>EACCES · 권한 거부</small></div>
+</div>
+<div class="proof-join">↓ 동일한 원본 검증기로 채점 ↓</div>
+<div class="proof-scores">
+<div>패치 전<b>5 통과 · 2 실패</b></div><span aria-hidden="true">→</span><div>패치 후<b>7 통과 · 0 실패</b></div>
+</div>
+<figcaption>verifier-tc4soa2t · 실행 UID 1000 · 검증기 SHA-256 전후 일치</figcaption>
+</figure>
+</section>
+<section id="graph" hidden><h1>Graphify 그래프</h1>
+<p>FedOps · 3cd0842 · 코드 커뮤니티 간 연결</p>
+<iframe id="graph-frame" title="FedOps 저장소의 Graphify 그래프" sandbox="allow-scripts" style="width:100%;height:72vh;border:1px solid #cbdbd7;border-radius:12px"></iframe>
+</section>
 </main>
 <script>
 const pick = document.querySelector('#pick');
@@ -138,6 +184,31 @@ function render() {
   if (last?.event === 'failed') status += ' · 실행 로그를 확인하세요';
   statusText.textContent = run ? status + ' · ' + run : status;
 }
+const navigation = document.querySelector('nav');
+function switchView() {
+  const active = ['#timeline','#proof','#graph'].includes(location.hash) ? location.hash : '#chat';
+  const frame = document.querySelector("#graph-frame");
+  if (active === "#graph" && !frame.hasAttribute("src")) frame.src = "/graph.html";
+  for (const link of navigation.querySelectorAll('a')) {
+    const selected = link.hash === active;
+    document.querySelector(link.hash).hidden = !selected;
+    if (selected) link.setAttribute('aria-current','page');
+    else link.removeAttribute('aria-current');
+  }
+}
+window.addEventListener('hashchange', switchView);
+switchView();
+
+const pending = new Map();
+function updateReplies() {
+  for (const [run,bubble] of pending) {
+    const last = runs[run]?.at(-1);
+    if (last?.event === 'done' || last?.event === 'failed') {
+      bubble.textContent = last.event === 'done' ? (last.answer || '답변 내용 없음') : '실행 실패 · 실행 타임라인에서 기록을 확인하세요.';
+      pending.delete(run);
+    } else if (bubble.textContent !== '답변을 기다리는 중…') bubble.textContent = '답변을 기다리는 중…';
+  }
+}
 const form = document.querySelector('#query');
 const question = document.querySelector('#question');
 const evidence = document.querySelector('#evidence');
@@ -157,7 +228,15 @@ form.onsubmit = async event => {
       selectedRun = (await response.json()).run;
       if (!Array.from(pick.options).some(o => o.value === selectedRun)) pick.add(new Option(selectedRun, selectedRun));
       pick.value = selectedRun;
-      feedback.textContent = '제출한 질문 · ' + value;
+      const userMessage = element('div',value);
+      userMessage.className = 'message mine';
+      const reply = element('div','답변을 기다리는 중…');
+      reply.className = 'message';
+      document.querySelector('#conversation').append(userMessage,reply);
+      pending.set(selectedRun,reply);
+      if (question.value.trim() === value) question.value = '';
+      feedback.textContent = '';
+      updateReplies();
       render();
       return;
     }
@@ -185,6 +264,7 @@ async function refresh() {
     const response = await fetch('/runs');
     if (!response.ok) throw Error();
     runs = await response.json();
+    updateReplies();
     const keys = Object.keys(runs);
     if (selectedRun && !keys.includes(selectedRun)) keys.unshift(selectedRun);
     if (JSON.stringify(keys) !== JSON.stringify(Array.from(pick.options).slice(1).map(o=>o.value))) {
@@ -194,6 +274,7 @@ async function refresh() {
     render();
   } catch {
     lastRender = null;
+    for (const bubble of pending.values()) bubble.textContent = '연결을 복구하는 중…';
     statusText.textContent = '연결 끊김 · 다시 연결하는 중';
   } finally { setTimeout(refresh,750); }
 }

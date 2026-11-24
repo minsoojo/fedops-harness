@@ -42,7 +42,7 @@ python3 agent.py setup
 python3 agent.py live-demo
 ```
 
-`setup`은 전용 프로필·provider를 등록하고 이미지를 빌드한 뒤 `fedops-agent-loop` 샌드박스를 만든다. 이미 있는 동명의 provider와 샌드박스는 재사용한다. 기존 샌드박스에 새 이미지를 반영하려면 다른 이름을 `FEDOPS_SANDBOX`에 지정해 setup을 실행한다. 빌드 환경이 별도 CA를 요구하면 호스트의 신뢰할 수 있는 CA 번들 경로를 `FEDOPS_BUILD_CA`에 설정한다.
+`setup`은 전용 프로필·provider를 등록하고 이미지를 빌드한 뒤 `fedops-turn-limit` 샌드박스를 만든다. 이미 있는 동명의 provider와 샌드박스는 재사용한다. 기존 샌드박스에 새 이미지를 반영하려면 다른 이름을 `FEDOPS_SANDBOX`에 지정해 setup을 실행한다. 빌드 환경이 별도 CA를 요구하면 호스트의 신뢰할 수 있는 CA 번들 경로를 `FEDOPS_BUILD_CA`에 설정한다.
 
 `live-demo`는 독립된 메모리 파일로 두 번 실제 호출한다. 첫 응답은 현재 구현 0.20과 합의 없음이어야 한다. 하네스가 발표용 결정을 호스트에 기록한 뒤 두 번째 세션이 0.80, 명시한 0은 0.20, 이번 실행의 고유 출처까지 반환해야 PASS가 나온다. 세션 ID도 서로 달라야 한다.
 
@@ -72,7 +72,7 @@ OpenShell 0.1.9 게이트웨이를 mTLS로 기동해 로그인, provider 프로�
 서버에서 `python3 viewer.py`를 실행하고 브라우저로 http://127.0.0.1:8765 를 연다. 원격 서버라면 SSH 연결에 `-L 8765:127.0.0.1:8765`를 추가한다. 다른 터미널에서 아래 명령을 실행하면 시작, 도구 호출·반환, 완료·실패가 순서대로 표시된다.
 
 - 키 없는 연습: `docker build -t fedops-claude:2.1.330 .` 후 `python3 agent.py replay-loop`. 격리된 Docker 안에서 모의 모델 응답에 따라 실제 Claude Code가 Read와 Edit를 실행한다.
-- 실제 작업: `python3 agent.py setup` 후 기존 ask, edit, live-demo 명령을 사용한다. 이 버전의 기본 샌드박스는 새 worker를 포함하는 `fedops-agent-loop`다.
+- 실제 작업: `python3 agent.py setup` 후 기존 ask, edit, live-demo 명령을 사용한다. 이 버전의 기본 샌드박스는 새 worker를 포함하는 `fedops-turn-limit`다.
 - 창은 0.75초마다 로컬 실행 기록을 읽는다. 실행을 선택하면 해당 작업의 기록을 다시 볼 수 있다.
 
 ### 모델 회차별 다이어그램
@@ -124,6 +124,8 @@ python build_context.py graph .context-cache/FedOps
 
 그래프 재생성은 고정 커밋의 임시 체크아웃에서 Graphify의 `--code-only` 추출을 실행한다. 소스 경로와 줄 번호가 있는 관계를 배포용 색인에 담는다. 문서 요약을 갱신할 때는 `evidence/fedops-overview.md`의 원문과 확인일을 함께 대조한다.
 
-뷰어에서 **질문 실행**을 누르면 선택한 OpenShell 샌드박스에서 실제 ask를 시작하고, 발급된 실행 ID의 회차와 최종 답변을 표시한다. **컨텍스트 조회**는 모델 호출 전에 근거만 확인하는 버튼이다. 회차 기록 worker를 설치한 샌드박스가 `fedops-ui-rounds`라면 `FEDOPS_SANDBOX=fedops-ui-rounds python3 viewer.py`로 뷰어를 시작한다.
+뷰어에서 **질문 실행**을 누르면 선택한 OpenShell 샌드박스에서 실제 ask를 시작하고, 발급된 실행 ID의 회차와 최종 답변을 표시한다. **컨텍스트 조회**는 모델 호출 전에 근거만 확인하는 버튼이다. 회차 기록 worker를 설치한 샌드박스가 `fedops-turn-limit`라면 `FEDOPS_SANDBOX=fedops-turn-limit python3 viewer.py`로 뷰어를 시작한다.
 
-OpenRouter가 유료 모델에 HTTP 402를 반환하는 계정에서는 뷰어 시작 시 무료 라우터를 명시할 수 있다. 예: `FEDOPS_MODEL=openrouter/free FEDOPS_SANDBOX=fedops-ask-rounds python3 viewer.py`. 이 샌드박스에는 OpenRouter의 /api/v1/messages 요청을 인식하는 worker가 필요하다. 실행 실패 시 해당 실행 폴더의 runtime.log에서 Claude의 API 오류를 확인한다.
+OpenRouter가 유료 모델에 HTTP 402를 반환하는 계정에서는 뷰어 시작 시 무료 라우터를 명시할 수 있다. 예: `FEDOPS_MODEL=openrouter/free FEDOPS_SANDBOX=fedops-turn-limit python3 viewer.py`. 이 샌드박스에는 OpenRouter의 /api/v1/messages 요청을 인식하는 worker가 필요하다. 실행 실패 시 해당 실행 폴더의 runtime.log에서 Claude의 API 오류를 확인한다.
+
+각 ask, edit, recall 실행은 Claude Code의 `--max-turns 8`로 제한한다. 추가 턴이 필요하면 실행이 실패로 끝나며 runtime.log에 한도가 기록된다. UI의 회차는 모델 요청을 세므로 재시도가 발생하면 에이전트 턴 수와 다를 수 있다.

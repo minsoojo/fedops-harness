@@ -60,6 +60,18 @@ class Viewer(BaseHTTPRequestHandler):
         if self.path == "/":
             body = (ROOT / "viewer.html").read_bytes()
             mime = "text/html"
+        elif self.path == "/graph.html":
+            body = (ROOT / "evidence/fedops-graph.html").read_bytes()
+            mime = "text/html"
+        elif self.path == "/vis-network.min.js":
+            body = (ROOT / "ui-assets/vis-network.min.js").read_bytes()
+            mime = "application/javascript"
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         elif self.path == "/runs":
             runs = {}
             for file in sorted((ROOT / "runs").glob("**/timeline.jsonl"),

@@ -22,6 +22,25 @@ def repository_rows(repo):
         yield path, int(number), code.strip()
 
 
+def export_graph_html(graph):
+    import networkx as nx
+    from graphify.cluster import cluster, label_communities_by_hub
+    from graphify.export import to_html
+
+    network = nx.node_link_graph(graph, edges="edges", directed=True)
+    communities = cluster(network)
+    labels = label_communities_by_hub(network, communities)
+    target = EVIDENCE / "fedops-graph.html"
+    with tempfile.TemporaryDirectory() as temp:
+        output = Path(temp) / target.name
+        if not to_html(network, communities, str(output), community_labels=labels, node_limit=5000):
+            raise ValueError("Graphify HTML 생성 실패")
+        html = output.read_text().replace(
+            "https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js",
+            "/vis-network.min.js")
+        target.write_text(html)
+
+
 def graph_rows(repo):
     # The extractor sees only the pinned tree, even if the user's checkout is dirty.
     with tempfile.TemporaryDirectory() as folder:
@@ -31,6 +50,7 @@ def graph_rows(repo):
         subprocess.run(["graphify", "extract", ".", "--code-only", "--max-workers", "2",
                         "--no-cluster", "--out", folder], cwd=source, check=True)
         graph = json.loads((Path(folder) / "graphify-out/graph.json").read_bytes())
+        export_graph_html(graph)
         labels = {node["id"]: node["label"] for node in graph["nodes"]}
         tracked = set(git(source, "ls-files").splitlines())
         for edge in graph["edges"]:

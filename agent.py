@@ -14,7 +14,7 @@ from stream_loop import messages
 import fedops
 
 ROOT = Path(__file__).resolve().parent
-BOX = os.getenv("FEDOPS_SANDBOX", "fedops-agent-loop")
+BOX = os.getenv("FEDOPS_SANDBOX", "fedops-turn-limit")
 MODEL = os.getenv("FEDOPS_MODEL", "anthropic/claude-sonnet-4.6")
 PROVIDER = "fedops-openrouter"
 IMAGE = "fedops-claude:2.1.330"
