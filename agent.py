@@ -1,6 +1,7 @@
 """Host-side FedOps context, OpenShell launcher, independent completion checks."""
 import argparse
 from contextlib import redirect_stdout
+from hashlib import sha256
 from io import StringIO
 import json
 import os
@@ -65,6 +66,33 @@ def setup_ask():
                                       "cat", "/opt/fedops/codex-revision"], text=True).strip()
     if actual != CODEX_REV:
         raise ValueError(f"Codex 빌드 커밋 불일치: {actual}")
+
+
+def edit_version():
+    digest = sha256(CODEX_REV.encode())
+    for name in ("codex_edit.py", "codex_ask.py", "check.py", "evidence/aggregation.py", "infra/Edit.Dockerfile"):
+        digest.update((ROOT / name).read_bytes())
+    return digest.hexdigest()[:12]
+
+
+EDIT_BOX = os.getenv("FEDOPS_EDIT_SANDBOX", "edit-" + edit_version())
+EDIT_MODEL = os.getenv("FEDOPS_EDIT_MODEL") or os.getenv("FEDOPS_MODEL") or "openai/gpt-4.1-mini"
+
+
+def setup_edit():
+    ensure_provider("fedops-codex-router", "infra/codex-provider.yaml")
+    setup_ask()
+    image = "fedops-edit:" + edit_version()
+    if not exists("sandbox", EDIT_BOX):
+        subprocess.run(["docker", "build", "--build-arg", f"BASE={ASK_IMAGE}", "-t", image,
+                        "-f", str(ROOT / "infra/Edit.Dockerfile"), str(ROOT)], check=True)
+        subprocess.run(["openshell", "sandbox", "create", "--name", EDIT_BOX, "--from", image,
+                        "--provider", "fedops-codex-router", "--policy", str(ROOT / "infra/policy.yaml"),
+                        "--detach", "--", "sleep", "infinity"], check=True)
+    actual = subprocess.check_output(["openshell", "sandbox", "exec", "-n", EDIT_BOX, "--",
+                                      "cat", "/opt/fedops/codex-revision"], text=True).strip()
+    if actual != CODEX_REV:
+        raise ValueError(f"Unexpected edit Codex revision: {actual}")
 
 
 def setup():
@@ -143,6 +171,9 @@ def _run_turn(folder, mode, question, memory, record):
     cmd = ["openshell", "sandbox", "exec", "-n", BOX, "--", "python3", "/opt/fedops/worker.py"]
     if mode == "ask":
         cmd = ["openshell", "sandbox", "exec", "-n", ASK_BOX, "--", "python3", "/opt/fedops/codex_ask.py"]
+    elif mode == "edit":
+        req["model"] = EDIT_MODEL
+        cmd = ["openshell", "sandbox", "exec", "-n", EDIT_BOX, "--", "python3", "/opt/fedops/codex_edit.py"]
     report = None
     with (folder / "runtime.log").open("w") as log:
         for packet in messages(cmd, json.dumps(req), 950 if mode == "ask" else 370, stderr=log):
@@ -152,9 +183,9 @@ def _run_turn(folder, mode, question, memory, record):
                 report = packet
     if report is None:
         raise ValueError(f"결과 없음 · {folder / 'runtime.log'}")
-    if mode == "ask" and (report.get("engine"), report.get("revision")) != ("codex", CODEX_REV):
+    if mode in {"ask", "edit"} and (report.get("engine"), report.get("revision")) != ("codex", CODEX_REV):
         raise ValueError("예상한 Codex 포크에서 생성한 답변인지 확인할 수 없습니다")
-    if mode == "ask":
+    if mode in {"ask", "edit"}:
         report["model"] = req["model"]
     (folder / "result.json").write_text(json.dumps(report, indent=2, ensure_ascii=False))
     (folder / "events.jsonl").write_text("".join(
@@ -211,6 +242,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="mode", required=True)
     sub.add_parser("setup")
+    sub.add_parser("setup-edit")
     sub.add_parser("setup-ask")
     sub.add_parser("live-demo")
     replay_parser = sub.add_parser("replay-loop")
@@ -223,6 +255,8 @@ def main():
         setup()
     elif args.mode == "replay-loop":
         replay_loop(args.wait_first, args.repository)
+    elif args.mode == "setup-edit":
+        setup_edit()
     elif args.mode == "setup-ask":
         setup_ask()
     elif args.mode == "live-demo":

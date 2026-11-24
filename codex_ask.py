@@ -8,22 +8,26 @@ import tempfile
 from stream_loop import messages
 
 
-def ask(request, work, emit, *, instructions_text, budget, repository=False):
+def ask(request, work, emit, *, instructions_text, budget, repository=False, openrouter=False):
     env = os.environ.copy()
     home = work / "codex"
     home.mkdir(mode=0o700)
     env.update(CODEX_HOME=str(home), HOME=str(work), FEDOPS_ASK="1", FEDOPS_REQUEST_LIMIT=str(budget))
     instructions = home / "instructions.md"
     instructions.write_text(instructions_text)
-    config = f'model_instructions_file = "{instructions}"\n' + """
-model_provider = "fedops-openai"
+    if openrouter:
+        provider, name, endpoint, credential = "openrouter", "OpenRouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"
+    else:
+        provider, name, endpoint, credential = "fedops-openai", "OpenAI API", "https://api.openai.com/v1", "OPENAI_API_KEY"
+    config = f'model_instructions_file = "{instructions}"\n' + f"""
+model_provider = "{provider}"
 approval_policy = "never"
 sandbox_mode = "read-only"
 web_search = "disabled"
-[model_providers.fedops-openai]
-name = "OpenAI API"
-base_url = "https://api.openai.com/v1"
-env_key = "OPENAI_API_KEY"
+[model_providers.{provider}]
+name = "{name}"
+base_url = "{endpoint}"
+env_key = "{credential}"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
@@ -89,7 +93,7 @@ default_tools_approval_mode = "approve"
             message = packet.get("message") or packet.get("error", {}).get("message")
             if message and message != failure:
                 failure = message
-                print(failure.replace(env.get("OPENAI_API_KEY") or "\0", "[redacted]")[:1200],
+                print(failure.replace(env.get(credential) or "\0", "[redacted]")[:1200],
                       file=sys.stderr, flush=True)
     if usage is None or not number or not last_message.is_file() or not last_message.read_text().strip():
         raise ValueError("Codex 질문 실행에서 최종 답변을 받지 못했습니다")

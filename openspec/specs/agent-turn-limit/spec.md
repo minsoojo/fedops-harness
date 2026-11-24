@@ -7,7 +7,7 @@
 ## Requirements
 
 ### Requirement: 실행당 최대 턴
-worker는 ask의 모델 요청을 실행당 최대 8회로 제한하고 edit와 recall은 Claude Code의 최대 8턴을 유지해야 한다 (SHALL).
+worker는 ask 및 edit의 Codex 모델 요청을 실행당 최대 8회로 제한하고 recall은 Claude Code의 최대 8턴을 유지해야 한다 (SHALL).
 
 #### Scenario: 추가 턴 필요
 - **WHEN** 질문을 마치려면 아홉 번째 모델 요청이 필요하다
