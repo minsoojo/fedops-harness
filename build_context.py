@@ -71,6 +71,12 @@ def main():
     rows = sorted(set(provider(args.checkout.resolve())))
     if not rows:
         raise ValueError("빈 컨텍스트 색인")
+    if args.source == "repository":
+        # Read Git objects, including their original line endings, independently of the worktree.
+        archive = subprocess.check_output(["git", "-C", args.checkout, "archive",
+                                           "--format=tar", f"--prefix={REVISION}/", REVISION,
+                                           "*.py", "*.yaml", "*.yml"])
+        (EVIDENCE / "repository-source.tar.gz").write_bytes(gzip.compress(archive, mtime=0))
     data = {"revision": REVISION, "rows": rows}
     if args.source == "graph":
         from importlib.metadata import version

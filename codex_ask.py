@@ -1,0 +1,101 @@
+"""Run one forked codex-exec in the question sandbox and adapt its JSONL events."""
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+from stream_loop import messages
+
+
+def ask(request, work, emit):
+    env = os.environ.copy()
+    home = work / "codex"
+    home.mkdir(mode=0o700)
+    env.update(CODEX_HOME=str(home), HOME=str(work), FEDOPS_ASK="1")
+    instructions = home / "instructions.md"
+    instructions.write_text("FedOps 질문에 한국어로 간결하게 답한다. 저장소의 코드나 설정은 Grep으로 검색한 뒤 "
+                            "Read로 해당 줄을 확인하고 기준 커밋의 파일과 줄 링크를 인용한다.")
+    (home / "config.toml").write_text(f'model_instructions_file = "{instructions}"\n' + """
+model_provider = "openrouter"
+approval_policy = "never"
+sandbox_mode = "read-only"
+web_search = "disabled"
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+wire_api = "responses"
+request_max_retries = 0
+stream_max_retries = 0
+supports_websockets = false
+[features]
+code_mode = false
+code_mode_only = false
+tool_search = false
+multi_agent = false
+multi_agent_v2 = false
+shell_tool = false
+[mcp_servers.repository]
+command = "/usr/local/bin/python3"
+args = ["-I", "/opt/fedops/repository_mcp.py"]
+required = true
+default_tools_approval_mode = "approve"
+""")
+    revision = Path("/opt/fedops/codex-revision").read_text().strip()
+    last_message = work / "answer"
+    cmd = ["/usr/local/bin/fedops-codex", "--json", "--ephemeral", "--skip-git-repo-check",
+           "--model", request["model"], "-o", str(last_message), "-"]
+    trace, calls, blocks = [], {}, []
+    session, usage, number, failure = None, None, 0, None
+    for packet in messages(cmd, request["brief"], 300, cwd=work, env=env):
+        kind = packet.get("type")
+        if kind == "thread.started":
+            session = packet["thread_id"]
+        elif kind == "fedops.request":
+            number = packet["round"]
+            blocks = []
+            emit(event="model_request", round=number)
+        elif kind == "fedops.output":
+            item = packet["item"]
+            if item["type"] == "message" and item.get("role") == "assistant":
+                blocks.extend({"type": "text", "text": part["text"]} for part in item["content"]
+                              if part["type"] == "output_text")
+            elif item["type"] == "function_call":
+                call = item["call_id"]
+                calls[call] = number
+                try:
+                    arguments = json.loads(item["arguments"])
+                except ValueError:
+                    arguments = item["arguments"]
+                blocks.append({"type": "tool_use", "name": item["name"].split("__")[-1],
+                               "id": call, "input": arguments})
+        elif kind == "fedops.response":
+            emit(event="model_response", round=number, blocks=blocks)
+        elif kind in {"item.started", "item.completed"} and packet["item"]["type"] == "mcp_tool_call":
+            item = packet["item"]
+            call = item["id"]
+            fields = {"event": "tool_use", "id": call, "tool": item["tool"]} if kind == "item.started" else {
+                "event": "tool_result", "id": call,
+                "error": item["status"] != "completed" or bool(item.get("error"))}
+            trace.append(fields)
+            emit(**fields, round=calls.get(call, number))
+        elif kind == "turn.completed":
+            usage = packet["usage"]
+        elif kind in {"error", "turn.failed"}:
+            message = packet.get("message") or packet.get("error", {}).get("message")
+            if message and message != failure:
+                failure = message
+                print(failure.replace(env.get("OPENROUTER_API_KEY") or "\0", "[redacted]")[:1200],
+                      file=sys.stderr, flush=True)
+    if usage is None or not number or not last_message.is_file() or not last_message.read_text().strip():
+        raise ValueError("Codex 질문 실행에서 최종 답변을 받지 못했습니다")
+    return dict(result=last_message.read_text().strip(), session=session, usage=usage,
+                trace=trace, engine="codex", revision=revision)
+
+
+if __name__ == "__main__":
+    with tempfile.TemporaryDirectory(dir="/sandbox", prefix="fedops-ask-") as folder:
+        def emit(**fields):
+            print(json.dumps({"progress": fields}), flush=True)
+        print(json.dumps(ask(json.load(sys.stdin), Path(folder), emit)), flush=True)

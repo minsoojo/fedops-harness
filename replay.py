@@ -15,7 +15,7 @@ if Path("/opt/fedops/worker.py").exists():
 import worker
 
 
-def replay(work, emit=None, wait_first=False):
+def replay(work, emit=None, wait_first=False, repository=False):
     first_request = True
     class Messages(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -44,7 +44,27 @@ def replay(work, emit=None, wait_first=False):
             reason = "end_turn"
             block = {"type": "text", "text": ""}
             delta = {"type": "text_delta", "text": "Scripted tool replay completed."}
-            if len(results) < 2:
+            if repository:
+                snapshot, = (worker.APP / "repository").iterdir()
+                relative = "simulation/examples/CIFAR100/conf/config.yaml"
+                if not results:
+                    name = "Grep"
+                    args = {"pattern": "weighted_average", "glob": "*.yaml",
+                            "path": str(snapshot), "output_mode": "content", "-n": True}
+                elif len(results) == 1:
+                    if relative not in json.dumps(results[-1]) or results[-1].get("is_error"):
+                        raise ValueError("Grep did not find the pinned config: " + str(results[-1])[:600])
+                    name = "Read"
+                    args = {"file_path": str(snapshot / relative), "offset": 41, "limit": 3}
+                else:
+                    if "_target_: fedops.simulation.fl_strategy.aggregation.weighted_average" not in json.dumps(results[-1]):
+                        raise ValueError("Read did not return the configuration lines")
+                    delta["text"] = f"https://github.com/gachon-CCLab/FedOps/blob/{snapshot.name}/{relative}#L42"
+                if len(results) < 2:
+                    block = dict(type="tool_use", id="toolu_" + name, name=name, input={})
+                    delta = dict(type="input_json_delta", partial_json=json.dumps(args))
+                    reason = "tool_use"
+            elif len(results) < 2:
                 name = "Read" if not results else "Edit"
                 args = {"file_path": path}
                 if results:
@@ -82,10 +102,18 @@ def replay(work, emit=None, wait_first=False):
         try:
             with patch.dict(os.environ, {"OPENROUTER_API_KEY": "offline-test-value"}), \
                     patch.object(subprocess, "Popen", local_transport):
-                report = worker.execute({"mode": "edit", "model": "anthropic/claude-sonnet-4.6",
+                report = worker.execute({"mode": "ask" if repository else "edit", "model": "anthropic/claude-sonnet-4.6",
                                          "brief": "Run the FedOps tool replay."}, work, emit)
         finally:
             server.shutdown()
+    if repository:
+        if [e["tool"] for e in report["trace"] if e["event"] == "tool_use"] != ["Grep", "Read"]:
+            raise RuntimeError("저장소 도구 호출 누락")
+        if not report["result"].endswith("/simulation/examples/CIFAR100/conf/config.yaml#L42"):
+            raise RuntimeError("출처 확인 실패")
+        if not emit:
+            print("PASS · Grep → Read · " + report["result"])
+        return
     if (report["before"]["code"] != 1 or report["after"]["code"] != 0 or
             [e["tool"] for e in report["trace"] if e["event"] == "tool_use"] != ["Read", "Edit"]):
         raise SystemExit("Replay failed")
@@ -97,4 +125,5 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as folder:
         def emit(item):
             print(json.dumps(item), flush=True)
-        replay(Path(folder), emit if "--timeline" in sys.argv else None, "--wait-first" in sys.argv)
+        replay(Path(folder), emit if "--timeline" in sys.argv else None, "--wait-first" in sys.argv,
+               "--repository" in sys.argv)

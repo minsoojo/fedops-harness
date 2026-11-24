@@ -7,11 +7,11 @@
 ## Requirements
 
 ### Requirement: 실행당 최대 턴
-worker는 Claude Code를 최대 8턴으로 실행해야 한다 (SHALL).
+worker는 ask의 모델 요청을 실행당 최대 8회로 제한하고 edit와 recall은 Claude Code의 최대 8턴을 유지해야 한다 (SHALL).
 
 #### Scenario: 추가 턴 필요
-- **WHEN** Claude Code가 턴 한도로 종료한다
-- **THEN** 하네스는 한도와 실패 원인을 기록하며 작업을 완료로 처리하지 않는다.
+- **WHEN** 질문을 마치려면 아홉 번째 모델 요청이 필요하다
+- **THEN** 추가 전송 전에 중단하고 실패 원인을 기록한다.
 
 #### Scenario: 한도 안에서 완료
 - **WHEN** 주어진 턴 안에서 작업이 끝난다

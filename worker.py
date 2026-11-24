@@ -104,21 +104,19 @@ def execute(request, work, emit=None):
     shutil.copyfile(APP / "evidence/aggregation.py", target)
     shutil.copyfile(APP / "check.py", work / "check.py")
     prompt = request["brief"] + "\n작업 복사본의 집계 코드 위치: " + TARGET
-    if mode == "ask":
-        prompt += "\n질문에 답할 근거가 위에 있으면 해당 출처와 함께 바로 답하세요."
-    toolset = "Read"
+    toolset = "Read,Grep"
     report = {}
     if mode == "edit":
         report["before"] = tests(target)
         if report["before"]["code"] != 1 or "FAILED (failures=2)" not in report["before"]["log"]:
             raise ValueError("unexpected baseline test result")
         # The independent grader is baked into the image. The agent may run a copy.
-        toolset = "Read,Edit,Bash"
+        toolset = "Read,Grep,Edit,Bash"
         prompt += ("\nweighted_average 본문만 수정하고, python3 -I -B check.py " + TARGET
                    + " 로 검사하세요. 실패하면 고치고 다시 검사하세요.")
     args = ["claude", "-p", "--no-session-persistence", "--output-format", "stream-json", "--verbose",
             "--max-turns", str(MAX_AGENT_TURNS), "--model", model, "--tools", toolset, "--permission-mode", "dontAsk",
-            "--allowedTools", "Read"]
+            "--add-dir", str(APP / "repository"), "--allowedTools", "Read", "Grep"]
     if mode == "edit":
         args += ["Edit", "Bash(python3 -I -B check.py " + TARGET + ")"]
     if mode == "recall":

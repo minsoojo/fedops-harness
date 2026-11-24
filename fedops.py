@@ -4,7 +4,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from source_context import print_matches
+from source_context import REVISION, print_matches
 
 ROOT = Path(__file__).resolve().parent
 MEMORY = ROOT / "memory" / "fedops.sqlite3"
@@ -24,9 +24,15 @@ def remember(topic, decision, source, memory=MEMORY):
         print(f"기록 #{cursor.lastrowid} · {topic} · {source}")
 
 
-def brief(question, memory=MEMORY):
-    print((ROOT / "PROJECT.md").read_text(encoding="utf-8").strip())
-    print_matches("repository", question)
+def brief(question, memory=MEMORY, *, for_agent=False):
+    if for_agent:
+        print(f"FedOps 저장소 기준 커밋 · {REVISION}")
+        print(f"원문 경로 · /opt/fedops/repository/{REVISION}")
+        print("저장소 질문은 Grep으로 이 경로에서 검색하고 Read로 해당 파일의 줄 범위를 확인하세요.")
+        print(f"답변 출처에 https://github.com/gachon-CCLab/FedOps/blob/{REVISION}/상대경로#L줄번호 를 사용하세요.")
+    else:
+        print((ROOT / "PROJECT.md").read_text(encoding="utf-8").strip())
+        print_matches("repository", question)
     print()
     print((ROOT / "evidence/fedops-overview.md").read_text(encoding="utf-8").strip())
     print_matches("graph", question)
